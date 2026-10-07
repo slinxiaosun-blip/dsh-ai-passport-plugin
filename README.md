@@ -20,13 +20,13 @@
 | 仓库 | 内容 | 地址 |
 | --- | --- | --- |
 | **本仓库**（挂件端） | DSH 插件（npm 包）+ 跨端文档 `docs/` + 主机侧工具 | `dsh-ai-passport-plugin` |
-| **固件仓库**（设备端） | `app_*.c` 固件源码，上游 fork，`feature/dsh-passport` 分支 | [`ai-passport`](https://github.com/slinxiaosun-blip/ai-passport) |
+| **固件仓库**（设备端） | `app_*.c` 固件源码，独立仓库，基于上游二次开发 | [`ai-passport-dsh`](https://github.com/slinxiaosun-blip/ai-passport-dsh) |
 
 开发时固件 clone 到本目录的 `vendor/ai-passport`（已被 `.gitignore` 排除）：
 
 ```bash
 git clone -b feature/dsh-passport \
-  https://github.com/slinxiaosun-blip/ai-passport.git vendor/ai-passport
+  https://github.com/slinxiaosun-blip/ai-passport-dsh.git vendor/ai-passport
 ```
 
 固件的环境、编译、烧录见 [docs/03-构建与烧录.md](docs/03-构建与烧录.md)。
