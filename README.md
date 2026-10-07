@@ -146,4 +146,10 @@ http://127.0.0.1:19387/dsh-passport
 
 ## License
 
-MIT（上游 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport) 亦为 MIT）。
+MIT © 2026 slinxiaosun-blip
+
+本仓库（DSH 插件、跨端文档与主机侧工具）是**独立原创作品**，版权归作者本人所有。
+
+设备端固件是另一回事：它是 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport)
+（MIT，版权归 FoloToy）的二次开发作品，遵循其原有许可，版权行见固件仓库的 `LICENSE`。
+两个仓库各自独立授权，互不派生。

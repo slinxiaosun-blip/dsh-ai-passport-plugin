@@ -16,5 +16,6 @@
   "engines": {
     "node": ">=20"
   },
+  "author": "slinxiaosun-blip",
   "license": "MIT"
 }
