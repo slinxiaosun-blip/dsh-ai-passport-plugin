@@ -1,0 +1,28 @@
+# ---------------------------------------------------------------------------
+# 本仓库 = 挂件端（DSH 插件）+ 跨端文档与工具。
+#
+# 设备端固件不在这里：vendor/ai-passport 是一个独立的 git 仓库
+# （上游 FoloToy/ai-passport 的 fork，开发分支 feature/dsh-passport），
+# 需单独 clone，本仓库只把它当外部依赖看待。
+# ---------------------------------------------------------------------------
+vendor/
+
+# Node
+node_modules/
+packages/*/node_modules/
+
+# 插件运行时产物（录音临时文件）
+packages/dsh-ai-passport/audio/
+
+# Python
+__pycache__/
+*.pyc
+
+# 日志
+*.log
+
+# macOS
+.DS_Store
+
+# 本地会话记忆（WorkBuddy 工作区数据，不入库）
+.workbuddy/

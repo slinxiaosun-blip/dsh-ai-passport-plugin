@@ -1,0 +1,44 @@
+# ============================================================================
+# dsh-ai-passport —— DSH bundle patch
+# ============================================================================
+# 这是插件的"挂载声明"。DSH 启动时按 bundle 层栈叠加各插件 patch，
+# 本文件把插件插入 Web profile 的配置树。
+#
+# 安装（本地开发）：
+#   dsh plugin --profile web add link:/绝对路径/packages/dsh-ai-passport
+# 或从构建产物安装：
+#   dsh plugin --profile web add /绝对路径/dsh-ai-passport-0.1.0.tgz
+#
+# 配置项说明见 README.md；这里给出的是保守默认值：
+#   transport: bridge —— 把原生 BLE 依赖关进子进程，ABI 不匹配也拖不垮 DSH。
+#   autoConnect: true —— 插件加载后自动扫描连接，用户不必先开面板。
+#   approval.readOnlyToolsOnDevice: false —— 所有审批都上设备（真机返工记录：
+#                                           只送只读工具会让用户在设备上看不到
+#                                           任何弹窗）。设备端默认停在「拒绝」、
+#                                           允许需二次确认、超时按拒绝上报，
+#                                           安全性不受影响。
+# ============================================================================
+
+- insert:
+    - id: dsh-ai-passport
+      name: dsh-ai-passport
+      config:
+        transport: bridge
+        # ★ autoConnect 默认 false：不要在**宿主启动关键路径**上 spawn 桥进程。
+        #
+        # 踩过的坑：桌面端曾出现 "desktop welcome: Web RPC failed" 启动失败，
+        # 现象是宿主起来后不回应 RPC。autoConnect=true 会让插件在宿主启动、
+        # 还在与渲染层完成 welcome 握手时就去 spawn BLE 桥子进程 ——
+        # 启动期的子进程创建/管道建立会与 boot 时序相互影响，代价是**整个应用打不开**。
+        # 而这个便利（省一次点击）完全不值这个风险。
+        # 改为：用户在挂件里点「扫描并连接」时才启动桥进程。
+        autoConnect: false
+        autoReconnect: true
+        panel:
+          enabled: true
+        approval:
+          enabled: true
+          readOnlyToolsOnDevice: false
+        voice:
+          enabled: true
+          language: zh

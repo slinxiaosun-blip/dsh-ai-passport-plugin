@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Passport × DeepSeek Harness</title>
+  <link rel="stylesheet" href="/dsh-passport/panel.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="link-dot" aria-hidden="true"></span>
+      <strong>AI Passport</strong>
+      <span class="sep">×</span>
+      <span>DeepSeek Harness</span>
+    </div>
+    <div class="topbar-right">
+      <span class="pill" id="link-state">未连接</span>
+      <span class="pill muted" id="device-name">—</span>
+      <button id="btn-connect" class="btn">扫描并连接</button>
+      <button id="btn-disconnect" class="btn ghost" disabled>断开</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden" role="status"></div>
+
+  <main class="grid">
+    <section class="card" id="card-device">
+      <h2>设备</h2>
+      <dl class="kv" id="device-info"><dt>状态</dt><dd>—</dd></dl>
+      <div class="row">
+        <button class="btn small" data-action="device.ping">测试心跳</button>
+        <button class="btn small" data-action="device.toast" data-payload='{"text":"来自控制面板的测试提示"}'>发送测试提示</button>
+        <button class="btn small" data-action="device.refresh">刷新任务列表</button>
+      </div>
+      <details class="diag">
+        <summary>链路诊断</summary>
+        <pre id="link-stats">—</pre>
+      </details>
+    </section>
+
+    <section class="card" id="card-tasks">
+      <h2>任务 <span class="count" id="task-count">0</span></h2>
+      <ul class="tasklist" id="task-list"><li class="empty">暂无任务。连接设备后会自动拉取。</li></ul>
+    </section>
+
+    <section class="card" id="card-approval">
+      <h2>待审批 <span class="count" id="approval-count">0</span></h2>
+      <ul class="approvallist" id="approval-list"><li class="empty">没有等待中的审批。</li></ul>
+      <p class="hint">设备上的审批与这里同步：任一端口做出决定，另一端口会立即收起。</p>
+    </section>
+
+    <section class="card" id="card-balance">
+      <h2>DeepSeek 余额</h2>
+      <div class="balance" id="balance-value">—</div>
+      <dl class="kv" id="balance-detail"></dl>
+      <div class="row">
+        <button class="btn small" data-action="balance.refresh">刷新余额</button>
+      </div>
+      <p class="hint" id="balance-hint"></p>
+    </section>
+
+    <section class="card" id="card-voice">
+      <h2>语音识别</h2>
+      <dl class="kv" id="speech-info"><dt>状态</dt><dd>—</dd></dl>
+      <div class="row">
+        <button class="btn small" data-action="speech.refresh">刷新状态</button>
+        <button class="btn small" data-action="speech.prepare">准备模型</button>
+      </div>
+      <p class="hint">设备端长按「确定」即可录音，音频经蓝牙传到电脑后在这里识别。首次使用需要下载本地模型（约 240&nbsp;MB）。</p>
+      <ul class="voicelog" id="voice-log"></ul>
+    </section>
+
+    <section class="card wide" id="card-events">
+      <h2>事件流 <button class="btn small ghost" id="btn-clear-events">清空</button></h2>
+      <ul class="events" id="event-log"></ul>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span class="mono" id="panel-version">dsh-ai-passport</span>
+    <span class="muted">面板只在本机可用；写操作仅限回环地址。</span>
+  </footer>
+
+  <script type="module" src="/dsh-passport/panel.js"></script>
+</body>
+</html>

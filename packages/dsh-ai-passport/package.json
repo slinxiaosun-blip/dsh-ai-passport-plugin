@@ -1,0 +1,53 @@
+{
+  "name": "dsh-ai-passport",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI Passport × DeepSeek Harness 联动插件：BLE 联机、任务新建与选择、执行状态显示、完成提醒、任务审批、DeepSeek 余额、语音输入",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "ai-passport",
+    "esp32",
+    "ble",
+    "bluetooth"
+  ],
+  "main": "lib/index.js",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test \"lib/**/*.test.js\" \"test/**/*.test.js\""
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "exports": {
+    "./client": "./lib/client.js",
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@stoprocent/noble": "^2.8.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@stoprocent/noble"
+    ]
+  }
+}

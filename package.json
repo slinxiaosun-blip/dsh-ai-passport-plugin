@@ -1,0 +1,20 @@
+{
+  "name": "dsh-ai-passport-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI Passport × DeepSeek Harness 联动：DSH 插件 + 固件应用",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm --workspace dsh-ai-passport run test",
+    "check-env": "./tools/setup-env.sh --check",
+    "build:firmware": "./tools/build-firmware.sh",
+    "check:static": "cd vendor/ai-passport && ./tools/validate.sh --static"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
