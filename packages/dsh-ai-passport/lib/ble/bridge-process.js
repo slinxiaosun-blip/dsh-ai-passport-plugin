@@ -120,6 +120,8 @@ export class BridgeProcessTransport extends Transport {
     this.logger('info', `[bridge] 启动 ${this.nodePath} ${args.join(' ')}`)
     const child = spawn(this.nodePath, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      // Windows 上 spawn 控制台程序默认弹一个黑框窗口，藏掉它
+      windowsHide: true,
       env: {
         ...process.env,
         // 关掉 Electron 的相关变量，避免子进程里误判运行环境
@@ -441,13 +443,7 @@ function mapWorkerErrorCode(code) {
 }
 
 /**
- * 挑一个能用的 Node 解释器。
- *
- * Electron 的可执行文件带 ELECTRON_RUN_AS_NODE 时能当 Node 用，但它跑原生模块的 ABI
- * 仍是 Electron 的。为了确保预编译的 noble 能加载，优先选择真正的系统 node。
- */
-/**
- * 挑选一个可用的 Node 解释器来跑桥进程。
+ * 挑选一个可用的 Node 解释器来跑桥进程（macOS / Windows 通用）。
  *
  * ★ 踩过的坑：之前写成 `if (在 Electron 里) return '/usr/local/bin/node'`，
  *   那是硬编码路径 —— Apple Silicon 上 Homebrew 装在 /opt/homebrew，
@@ -457,19 +453,44 @@ function mapWorkerErrorCode(code) {
  *
  * 正确做法：**按序探测，用第一个真实存在的**；探测在 spawn 之前完成，
  * 这样"解释器不存在"能变成一条可读错误，而不是一次神秘崩溃。
+ *
+ * 平台分支同理：Windows 的安装器落点与 PATH 分隔符都和 POSIX 不同，
+ * 按平台列候选，绝不假设另一平台的路径形态（platform/env 可注入，测试覆盖两个分支）。
  */
-export function nodeBinaryCandidates() {
+export function nodeBinaryCandidates(options = {}) {
+  const platform = options.platform ?? process.platform
+  const env = options.env ?? process.env
   const list = []
   const push = (p) => { if (p && !list.includes(p)) list.push(p) }
 
+  // Windows 路径用反斜杠拼（测试在 POSIX 宿主上注入 win32 时也要得到 Windows 形态）
+  const winJoin = (...parts) => parts.filter(Boolean).map((s) => s.replace(/[\\/]+$/, '')).join('\\')
+
   // ① 显式配置优先
-  push(process.env.DSH_PASSPORT_NODE)
+  push(env.DSH_PASSPORT_NODE)
   // ② 若我们本身就跑在普通 Node 上，直接用自己（最简单也最可靠）
   if (!process.versions?.electron) push(process.execPath)
-  // ③ 系统 node（PATH 里的那个）
-  push('/opt/homebrew/bin/node')   // Apple Silicon Homebrew
-  push('/usr/local/bin/node')      // Intel Homebrew / 官方安装包
-  push('/usr/bin/node')
+
+  if (platform === 'win32') {
+    // ③ Windows：官方安装器 / nvm-windows / volta / scoop 的常见落点，按序探测。
+    push(env.ProgramFiles && winJoin(env.ProgramFiles, 'nodejs', 'node.exe'))
+    push(env['ProgramFiles(x86)'] && winJoin(env['ProgramFiles(x86)'], 'nodejs', 'node.exe'))
+    push(env.LOCALAPPDATA && winJoin(env.LOCALAPPDATA, 'Programs', 'nodejs', 'node.exe'))
+    push(env.USERPROFILE && winJoin(env.USERPROFILE, 'scoop', 'shims', 'node.exe'))
+    push(env.LOCALAPPDATA && winJoin(env.LOCALAPPDATA, 'Volta', 'bin', 'node.exe'))
+    // PATH 兜住 nvm-windows 的 %NVM_SYMLINK% 等一切"终端里能敲 node"的安装。
+    // Windows 的列表分隔符是分号；条目可能带引号，剥掉再拼。
+    for (const dir of String(env.PATH ?? env.Path ?? '').split(';')) {
+      const trimmed = dir.trim().replace(/^"(.*)"$/, '$1')
+      if (trimmed) push(winJoin(trimmed, 'node.exe'))
+    }
+  } else {
+    // ③ 系统 node（PATH 里的那个）
+    push('/opt/homebrew/bin/node')   // Apple Silicon Homebrew
+    push('/usr/local/bin/node')      // Intel Homebrew / 官方安装包
+    push('/usr/bin/node')
+  }
+
   // ④ 兜底：Electron 自带的 Node。配合 ELECTRON_RUN_AS_NODE=1 就能当 Node 用；
   //    桥进程不依赖任何 Electron API，原生模块是 N-API 的，跨运行时可用。
   push(process.execPath)

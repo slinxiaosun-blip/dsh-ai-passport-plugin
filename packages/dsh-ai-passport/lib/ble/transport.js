@@ -3,7 +3,8 @@
  *
  * 这一层存在的唯一理由：把"蓝牙怎么连"与"连上之后干什么"彻底分开。
  *
- * 背景（这是本方案最大的技术风险）：Mac 侧要做 BLE Central，Node 生态里只有
+ * 背景（这是本方案最大的技术风险）：主机侧（macOS / Windows）要做 BLE Central，
+ * Node 生态里只有
  * noble 系列可选，而它是**原生模块**，需要与 DSH 内置的 Node 24 ABI 匹配。
  * 一旦 ABI 不匹配、或 Electron 的 fuses 阻止加载外部原生模块，noble 就用不了。
  *
@@ -33,7 +34,7 @@ export const LINK_STATE = Object.freeze({
 /** 错误类别。面板据此给出可操作的指引，而不是甩一个原始堆栈。 */
 export const TRANSPORT_ERROR = Object.freeze({
   NOT_AVAILABLE: 'not-available', // 驱动本身不可用（未安装 / ABI 不匹配）
-  PERMISSION_DENIED: 'permission-denied', // macOS 蓝牙权限被拒
+  PERMISSION_DENIED: 'permission-denied', // 系统蓝牙权限被拒（macOS 隐私设置 / Windows 蓝牙设置）
   ADAPTER_OFF: 'adapter-off', // 蓝牙未开启
   DEVICE_NOT_FOUND: 'device-not-found',
   CONNECT_FAILED: 'connect-failed',
@@ -70,7 +71,7 @@ export function classifyError(error) {
       '蓝牙权限被拒绝',
       {
         cause: raw,
-        hint: '打开「系统设置 → 隐私与安全性 → 蓝牙」，勾选 DeepSeek Harness；改动后需要重启应用。',
+        hint: 'macOS：系统设置 → 隐私与安全性 → 蓝牙，勾选 DeepSeek Harness；Windows：设置 → 蓝牙和其他设备，确认应用有蓝牙权限。改动后需要重启应用。',
       },
     )
   }

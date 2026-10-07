@@ -1,6 +1,6 @@
 {
   "name": "dsh-ai-passport",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "AI Passport × DeepSeek Harness 联动插件：BLE 联机、任务新建与选择、执行状态显示、完成提醒、任务审批、DeepSeek 余额、语音输入",

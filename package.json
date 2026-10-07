@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "test": "npm --workspace dsh-ai-passport run test",
+    "install-plugin": "node tools/install-plugin-to-dsh.mjs",
     "check-env": "./tools/setup-env.sh --check",
     "build:firmware": "./tools/build-firmware.sh",
     "check:static": "cd vendor/ai-passport && ./tools/validate.sh --static"

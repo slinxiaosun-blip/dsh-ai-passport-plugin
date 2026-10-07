@@ -4,10 +4,10 @@
 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）的**随身任务终端**：
 
 在设备上新建/选择 DSH 任务、看执行状态、收完成提醒、做任务审批、查 DeepSeek 余额、
-用语音下指令。设备与 Mac 之间走 BLE 蓝牙无线联机，无需 Wi-Fi。
+用语音下指令。设备与电脑（macOS / Windows 的 DSH 客户端）之间走 BLE 蓝牙无线联机，无需 Wi-Fi。
 
 ```
-┌─ AI Passport（设备） ─┐   BLE 5（GATT，自定义帧 + JSON）   ┌─ Mac + DSH ────────┐
+┌─ AI Passport（设备） ─┐   BLE 5（GATT，自定义帧 + JSON）   ┌─ Mac/Win + DSH ───┐
 │  ESP32-C3 固件        │ ◄──────────────────────────────► │  本插件（npm 包）   │
 │  app_*.c / LVGL UI   │      协议 v1 · 双端常量同步        │  ble/bridge/panel  │
 └──────────────────────┘                                   └───────────────────┘
@@ -49,7 +49,9 @@ git clone -b feature/dsh-passport \
 
 ## 快速开始
 
-前置：DSH 桌面版、Node ≥ 20、macOS（BLE 依赖 noble 原生模块，暂仅支持 Apple Silicon）。
+前置：DSH 桌面版（macOS 或 Windows）、Node ≥ 20。BLE 走 noble 原生后端：
+macOS 限 Apple Silicon；Windows 需 Windows 10 1703+（x64，noble 有 win32-x64 预编译；
+ARM64 需源码编译，见 [docs/08](docs/08-Windows反馈清单.md)）。
 
 ```bash
 # 0) clone 本仓库（固件不需要时可不 clone）
@@ -59,17 +61,20 @@ cd dsh-ai-passport-plugin
 # 1) 安装依赖
 npm install
 
-# 2) 把插件装进 DSH profile（符号链接方式，源码即生效代码）
-./tools/install-plugin-to-dsh.sh            # 默认 desktop
-./tools/install-plugin-to-dsh.sh web desktop # 可指定多个 profile
+# 2) 把插件装进 DSH profile（macOS / Windows 同一命令；链接方式，源码即生效代码）
+npm run install-plugin                 # 默认 desktop
+npm run install-plugin -- web desktop  # 可指定多个 profile
 
 # 3) 无硬件联调（虚拟设备会应答握手、心跳、任务列表、余额）
 npm test
 ```
 
-> 脚本对每个 profile 做 `node_modules/dsh-ai-passport -> 本仓库源码` 的符号链接，
-> 改源码即时生效。`desktop` profile 由 Electron 独占管理（`dsh plugin` CLI 拒绝操作），
-> 因此不走 CLI，手工链接是唯一可靠的开发安装方式。
+> Windows 也可用等价入口：`powershell -ExecutionPolicy Bypass -File tools\install-plugin-to-dsh.ps1`。
+>
+> 脚本对每个 profile 做 `node_modules/dsh-ai-passport -> 本仓库源码` 的链接
+> （macOS 用符号链接；Windows 用目录 junction，**无需**管理员权限；被机器策略禁止时
+> 自动降级为复制并明确提示），改源码即时生效。`desktop` profile 由 Electron 独占管理
+> （`dsh plugin` CLI 拒绝操作），因此不走 CLI，手工链接是唯一可靠的开发安装方式。
 
 装好后打开控制面板（DSH 内置 webserver）：
 
@@ -95,13 +100,21 @@ http://127.0.0.1:19387/dsh-passport
 
 | 组件 | 版本 | 说明 |
 | --- | --- | --- |
-| DSH 桌面版 | `0.2.0-rc.2` | 插件 API 基线，开发时以它为准 |
+| DSH 桌面版 | `0.2.0-rc.2` | 插件 API 基线，开发时以它为准；macOS 与 Windows 同一份插件代码 |
 | dsh CLI | `0.1.7-rc.2` | `dsh --version` 实测 |
-| 插件（本仓） | `1.0.0` | `packages/dsh-ai-passport/package.json` |
-| 设备固件 | `1.0.0` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
+| 插件（本仓） | `1.1.0` | `packages/dsh-ai-passport/package.json` |
+| 设备固件 | `1.1.0` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
 | BLE 协议 | `v1` | 双端常量 `PROTOCOL_VERSION` ↔ `AP_PROTOCOL_VERSION`，取较小值运行 |
 | 固件基线 | `main @ 0b9e4c8` | 上游 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport) |
 | Node | ≥ 20 | 开发机 22.22.2；DSH 桌面版内置 Node 24.21.0 |
+| 操作系统 | macOS（Apple Silicon）/ Windows 10 1703+ | BLE 后端：CoreBluetooth / WinRT（noble）；固件一次烧录两端通用 |
+
+版本记录：
+
+- `1.1.0` —— 插件安装与运行自动适配 macOS / Windows 两个 DSH 客户端
+  （安装器 junction/symlink 自适应、桥进程 Node 探测平台化、报错指引分平台）；
+  设备固件行为不变、一次烧录两端通用，`1.1.0` 仅是版本对齐。
+- `1.0.0` —— 阶段 A/B/C 全功能首个版本（任务台/审批/余额/语音/配对）。
 
 > 插件依赖 DSH `0.2.0-rc.x` 的 `ctx.webServer` / `speechToText` / `deepseekAccount`
 > 等宿主 API。DSH 升级前先跑 `npm test`（mock 联调）+ [docs/07](docs/07-设备端验收用例.md)
@@ -134,6 +147,7 @@ http://127.0.0.1:19387/dsh-passport
 | [05-语音发送-设计](docs/05-语音发送-设计.md) | 语音链路设计 |
 | [06-设备端问答与语音直发-设计](docs/06-设备端问答与语音直发-设计.md) | 设备端问答与语音直发 |
 | [07-设备端验收用例](docs/07-设备端验收用例.md) | 逐项验收表与真机实测记录 |
+| [08-Windows反馈清单](docs/08-Windows反馈清单.md) | Windows 客户端适配说明、已知边界、用户反馈清单 |
 
 ## 开发须知
 

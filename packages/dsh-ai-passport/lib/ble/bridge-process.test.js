@@ -126,12 +126,38 @@ test('★ 解释器候选列表：绝不只用硬编码路径', async () => {
   // spawn 必然失败，且失败发生在宿主启动路径上，后果是整个应用打不开
   // （"desktop welcome: Web RPC failed"）。
   const { nodeBinaryCandidates } = await import('./bridge-process.js')
-  const candidates = nodeBinaryCandidates()
+  const candidates = nodeBinaryCandidates({ platform: 'darwin', env: {} })
 
   assert.ok(candidates.length >= 2, '必须给出多个候选，而不是认死一条路径')
   assert.ok(candidates.includes('/opt/homebrew/bin/node'), 'Apple Silicon 的 Homebrew 路径必须在候选里')
   assert.ok(candidates.includes('/usr/local/bin/node'), 'Intel/官方安装路径也应在候选里')
   // 去重
+  assert.equal(new Set(candidates).size, candidates.length, '候选不应重复')
+})
+
+test('★ Windows 解释器候选：安装器落点 + PATH 扫描，形态是 Windows 路径', async () => {
+  const { nodeBinaryCandidates } = await import('./bridge-process.js')
+  const candidates = nodeBinaryCandidates({
+    platform: 'win32',
+    env: {
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local',
+      USERPROFILE: 'C:\\Users\\u',
+      PATH: 'C:\\nodejs;"C:\\Program Files\\nvm";',
+    },
+  })
+
+  assert.ok(candidates.includes('C:\\Program Files\\nodejs\\node.exe'), '官方安装器落点必须在候选里')
+  assert.ok(
+    candidates.includes('C:\\Program Files (x86)\\nodejs\\node.exe'),
+    '32 位安装器落点也应在候选里',
+  )
+  assert.ok(candidates.includes('C:\\Users\\u\\scoop\\shims\\node.exe'), 'scoop 落点应在候选里')
+  // PATH 扫描：覆盖 nvm-windows 的 %NVM_SYMLINK% 等任意自定义安装，且剥引号、跳空段
+  assert.ok(candidates.includes('C:\\nodejs\\node.exe'), 'PATH 里的 node.exe 必须被扫到')
+  assert.ok(candidates.includes('C:\\Program Files\\nvm\\node.exe'), '带引号的 PATH 条目要剥引号再拼')
+  assert.ok(candidates.every((p) => !p.includes('/') || p === process.execPath), 'Windows 候选不用 POSIX 分隔符')
   assert.equal(new Set(candidates).size, candidates.length, '候选不应重复')
 })
 

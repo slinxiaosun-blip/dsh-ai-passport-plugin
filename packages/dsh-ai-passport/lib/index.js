@@ -69,10 +69,13 @@ function heartbeat(stage, detail) {
   try {
     const os = globalThis.process?.getBuiltinModule?.('node:os')
     const fs = globalThis.process?.getBuiltinModule?.('node:fs')
+    const nodePath = globalThis.process?.getBuiltinModule?.('node:path')
     if (!fs || !os) return
-    const dir = `${os.homedir()}/.dsh`
+    // path.join（Windows 兼容）；getBuiltinModule 是可选 API，取不到时退回字符串拼接，
+    // 绝不能因为路径拼法丢掉心跳本身。
+    const dir = nodePath ? nodePath.join(os.homedir(), '.dsh') : `${os.homedir()}/.dsh`
     fs.appendFileSync(
-      `${dir}/dsh-ai-passport.log`,
+      nodePath ? nodePath.join(dir, 'dsh-ai-passport.log') : `${dir}/dsh-ai-passport.log`,
       `${new Date().toISOString()} ${stage} ${detail ?? ''}\n`,
     )
   } catch {

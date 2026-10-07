@@ -1,7 +1,7 @@
 /**
  * AI Passport ⇄ DSH 协议常量。
  *
- * 设计目标：一套常量同时被两端引用（Mac 侧 JS 与设备侧 C）。
+ * 设计目标：一套常量同时被两端引用（主机侧 JS：macOS / Windows；设备侧 C）。
  * 设备侧对应文件：firmware/main/app_proto.h —— 任何改动必须两边同步，
  * 并由 lib/protocol/chunk.test.js 与 tests/ 里的 C 侧用例共同守住。
  */
@@ -9,7 +9,7 @@
 /** 协议版本。两端取较小值运行；设备屏幕在版本不匹配时必须显式提示而不是静默失败。 */
 export const PROTOCOL_VERSION = 1
 
-/** 广播名。Mac 侧按名字 + Manufacturer Data 双重过滤，避免连到同名设备。 */
+/** 广播名。主机侧按名字 + Manufacturer Data 双重过滤，避免连到同名设备。 */
 export const DEVICE_NAME = 'FoloPassport-DSH'
 
 /**
@@ -60,9 +60,9 @@ export const MANUFACTURER_ID = 0xffff
  */
 export const UUID = Object.freeze({
   SERVICE: '0000a900a90050415353544f524f5350',
-  RX: 'a90050415353544f524f5350f0a90002', // write  → Mac 发给设备（Write Without Response）
-  TX: 'a90050415353544f524f5350f0a90003', // notify → 设备发给 Mac（JSON 控制，含 hello 握手）
-  VOICE: 'a90050415353544f524f5350f0a90004', // notify → 设备发给 Mac（音频）
+  RX: 'a90050415353544f524f5350f0a90002', // write  → 主机发给设备（Write Without Response）
+  TX: 'a90050415353544f524f5350f0a90003', // notify → 设备发给主机（JSON 控制，含 hello 握手）
+  VOICE: 'a90050415353544f524f5350f0a90004', // notify → 设备发给主机（音频）
   CTRL: 'a90050415353544f524f5350f0a90005', // read   → 能力/版本/电量
 })
 
@@ -132,7 +132,7 @@ export const HEARTBEAT_INTERVAL_MS = 5000
 //   自己断开连接"的原因之一。设备侧收到任何控制消息都会重置计时，见 app_link.c。
 export const HEARTBEAT_MISS_LIMIT = 6
 
-/** 设备能力位。设备在 hello / CTRL 上报，Mac 侧据此决定是否显示对应入口。 */
+/** 设备能力位。设备在 hello / CTRL 上报，主机侧据此决定是否显示对应入口。 */
 export const CAPABILITY = Object.freeze({
   DISPLAY: 1 << 0,
   BUTTONS: 1 << 1,

@@ -105,7 +105,7 @@ function stateError(state) {
     case 'poweredOff':
       return ['adapter-off', '系统蓝牙未开启']
     case 'unauthorized':
-      return ['permission-denied', '应用没有蓝牙权限']
+      return ['permission-denied', '应用没有蓝牙权限（macOS：隐私与安全性→蓝牙；Windows：设置→蓝牙和其他设备）']
     case 'unsupported':
       return ['not-available', '这台机器不支持 BLE']
     case 'resetting':
@@ -492,9 +492,10 @@ class Bridge {
       // ★ GATT 表对不上有两种完全不同的情况，处置必须区分：
       //
       //   A. 广播身份是我们（服务 UUID/名字命中），但发现到的表不是我们的 ——
-      //      这是 **macOS 陈旧缓存/僵尸连接**：设备刷过机后 GATT 表变了，系统
+      //      这是 **系统 BLE 陈旧缓存/僵尸连接**：设备刷过机后 GATT 表变了，系统
       //      仍留着出厂固件时代的服务表（真机返工记录：重连报「找不到控制特征」，
       //      实际看到的是旧表；重启设备有效正是因为重启掐断了系统层的旧连接）。
+      //      macOS 上实测到；Windows 的 WinRT 后端缓存行为不同，命中时同样处置即可。
       //      处置：断开重连让系统重发现，**绝不拉黑自己**。
       //
       //   B. 广播身份不是我们（混过识别过滤的冒牌设备）→ 断开并本会话拉黑，
@@ -508,14 +509,14 @@ class Bridge {
       const isOurs = svcUuids.includes(normalizeUuid(UUID.SERVICE)) || KNOWN.includes(advName)
 
       if (isOurs) {
-        log('warn', `GATT 表与广播身份不符（${peripheral.id}，疑似 macOS 陈旧缓存），断开重试`)
+        log('warn', `GATT 表与广播身份不符（${peripheral.id}，疑似系统 BLE 陈旧缓存），断开重试`)
         try {
           await this.disconnect()
         } catch {
           // 已断开
         }
         throw Object.assign(
-          new Error('设备 GATT 表疑似 macOS 陈旧缓存（刷机后未重发现），已断开重试'),
+          new Error('设备 GATT 表疑似系统 BLE 陈旧缓存（刷机后未重发现），已断开重试'),
           { code: 'stale-cache' },
         )
       }
@@ -574,7 +575,15 @@ class Bridge {
     })
   }
 
-  /** 协商 ATT 载荷。失败就退回保守值，不因为拿不到 MTU 就不干活。 */
+  /**
+   * 协商 ATT 载荷。失败就退回保守值，不因为拿不到 MTU 就不干活。
+   *
+   * 跨平台差异（macOS / Windows 一次烧录通用的关键之一）：
+   *   - macOS（CoreBluetooth）：noble 有 requestMtu，按请求值协商；
+   *   - Windows（noble-win / WinRT）：可能没有 requestMtu，但 WinRT 会自动
+   *     协商到 512 字节 ATT MTU，244 的默认载荷天然安全；
+   *   - 两条路都拿不到数值时回 244 —— 与固件侧 preferred MTU（≥247）匹配。
+   */
   async #negotiateMtu() {
     const peripheral = this.peripheral
     try {
@@ -584,6 +593,7 @@ class Bridge {
       }
       const cached = peripheral.mtu
       if (Number.isFinite(cached) && cached > 23) return Math.max(20, cached - 3)
+      log('info', 'MTU 未上报（Windows/WinRT 常见），使用默认载荷 244')
     } catch (error) {
       log('warn', `MTU 协商失败，退回 244：${error.message}`)
     }
