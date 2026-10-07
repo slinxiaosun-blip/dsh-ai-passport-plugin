@@ -31,6 +31,9 @@ git clone -b feature/dsh-passport \
 
 固件的环境、编译、烧录见 [docs/03-构建与烧录.md](docs/03-构建与烧录.md)。
 
+不打算自己编译固件的话，直接从 [Releases](https://github.com/slinxiaosun-blip/ai-passport-dsh/releases/latest)
+下载 `FoloToy-AI-Passport-full.bin`，从 `0x0` 一次性刷入即可。
+
 ## 功能
 
 | 能力 | 说明 |
