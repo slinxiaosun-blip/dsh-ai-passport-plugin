@@ -46,9 +46,13 @@ git clone -b feature/dsh-passport \
 
 ## 快速开始
 
-前置：DSH 桌面版、Node ≥ 20。
+前置：DSH 桌面版、Node ≥ 20、macOS（BLE 依赖 noble 原生模块，暂仅支持 Apple Silicon）。
 
 ```bash
+# 0) clone 本仓库（固件不需要时可不 clone）
+git clone https://github.com/slinxiaosun-blip/dsh-ai-passport-plugin.git
+cd dsh-ai-passport-plugin
+
 # 1) 安装依赖
 npm install
 
@@ -59,6 +63,10 @@ npm install
 # 3) 无硬件联调（虚拟设备会应答握手、心跳、任务列表、余额）
 npm test
 ```
+
+> 脚本对每个 profile 做 `node_modules/dsh-ai-passport -> 本仓库源码` 的符号链接，
+> 改源码即时生效。`desktop` profile 由 Electron 独占管理（`dsh plugin` CLI 拒绝操作），
+> 因此不走 CLI，手工链接是唯一可靠的开发安装方式。
 
 装好后打开控制面板（DSH 内置 webserver）：
 
