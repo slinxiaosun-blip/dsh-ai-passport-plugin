@@ -8,10 +8,15 @@
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
+    "deepseek",
+    "cordis",
     "ai-passport",
+    "folotoy",
     "esp32",
     "ble",
-    "bluetooth"
+    "bluetooth",
+    "speech-to-text",
+    "voice-input"
   ],
   "main": "lib/index.js",
   "files": [
