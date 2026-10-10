@@ -186,7 +186,9 @@ test('音频参数一致', async () => {
   await expectMatch('AP_AUDIO_BITS', constants.AUDIO.BITS, toInt)
   await expectMatch('AP_AUDIO_CHANNELS', constants.AUDIO.CHANNELS, toInt)
   await expectMatch('AP_AUDIO_MAX_SECONDS', constants.AUDIO.MAX_SECONDS, toInt)
-  await expectMatch('AP_AUDIO_SILENCE_STOP_MS', constants.AUDIO.SILENCE_STOP_MS, toInt)
+  // 旧版还有 AP_AUDIO_SILENCE_STOP_MS（静音自动结束门限）。该功能已删除，
+  // 设备端与 JS 两侧的宏/常量都一并移除，parity 断言也随之删除 ——
+  // 不要再加回来，否则等于把一个已废弃的行为写回协议契约。
 })
 
 test('设备名与厂商标识一致', async () => {

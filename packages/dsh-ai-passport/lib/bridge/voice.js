@@ -231,7 +231,14 @@ export class VoiceDomain {
         //   （真机返工记录的"先失败后出字"）。
         //   会话的音频是边录边发的，正常情况下 voice.end 紧跟最后一片音频到达；
         //   超过 STALE_SESSION_MS 没等到 voice.end 的会话判定为孤儿，直接丢弃。
-        const STALE_SESSION_MS = 10_000
+        //
+        //   ★★ 这个窗口**必须长于设备端单次录音上限**，否则会在录音**进行中**
+        //   把当前会话当成孤儿丢掉：随后的 voice.end 找不到会话被静默丢弃，
+        //   既不归档也不识别，设备端表现为"自己停了，但没出结果"，且无任何报错。
+        //   这就是它必须从 AUDIO.MAX_SECONDS 派生、而不是写死常量的原因 ——
+        //   曾经写死 10s，而设备上限是 15s（后来 30s），于是长录音一律静默失败。
+        //   余量留给 BLE 投递与转写排队，宁可多留一会儿会话，也不能误杀在录的会话。
+        const STALE_SESSION_MS = AUDIO.MAX_SECONDS * 1000 + 30_000
         if (queue && queue.length > 0) {
           const now = Date.now()
           while (queue.length > 0 && now - queue[0].startedAt > STALE_SESSION_MS) {

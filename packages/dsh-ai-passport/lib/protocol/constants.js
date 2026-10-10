@@ -151,10 +151,18 @@ export const AUDIO = Object.freeze({
   /** IMA-ADPCM 4:1，16k/16bit/mono 从 32KB/s 压到 8KB/s。 */
   CODEC: 'ima-adpcm',
   BLOCK_ALIGN: 256,
-  /** 单次录音上限（秒）。设备侧同一上限见 app_voice.c。 */
-  MAX_SECONDS: 15,
-  /** 静音自动结束门限（毫秒）。 */
-  SILENCE_STOP_MS: 1200,
+  /**
+   * 单次录音上限（秒）。设备侧同一上限见 app_proto.h 的 AP_AUDIO_MAX_SECONDS。
+   *
+   * ★ 这个值不只是"文档"：VoiceDomain 的会话存活期（STALE_SESSION_MS）由它派生。
+   *   两者必须满足 **陈旧窗口 > 录音上限**，否则录音还在进行，会话就被当成孤儿丢掉，
+   *   随后的 voice.end 找不到会话被静默丢弃 —— 设备端表现为"自己停了但没出结果"。
+   *   parity 测试锁的就是这条链路。
+   */
+  MAX_SECONDS: 30,
+  // 旧版有 SILENCE_STOP_MS（静音自动结束门限）。该功能已按产品决策删除 ——
+  // 录音只在「松手」或「触达 MAX_SECONDS」时结束，句中停顿原样保留。
+  // 设备端 app_voice.c 的同名宏与 parity 断言已一并删除，不要再加回来。
 })
 
 /**

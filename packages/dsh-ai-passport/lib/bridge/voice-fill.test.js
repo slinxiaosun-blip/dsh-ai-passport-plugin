@@ -364,6 +364,56 @@ test('voice.maxSeconds 宽松时不做任何截断', async () => {
   await domain.dispose()
 })
 
+test('长录音不被判为陈旧会话而丢弃（真机 T2 缺陷回归）', async () => {
+  // 曾经 STALE_SESSION_MS 写死 10s，短于设备端录音上限（15s，后 30s）。
+  // 后果：录音**进行中**会话就被当孤儿丢掉，随后 voice.end 找不到会话被静默丢弃，
+  // 既不归档也不识别，设备端表现为"自己停了但没出结果"，全程无报错。
+  // 这里把会话开始时间回拨，模拟"录满 30 秒才松手"。
+  const speech = fakeSpeech({ text: '长句识别结果' })
+  const { domain, handlers } = makeDomain({
+    speechToText: speech,
+    voice: { keepAudio: false },
+  })
+  handlers.get(MSG.VOICE_BEGIN)({ sessionId: 3, sampleRate: 16000, bits: 16, channels: 1, codec: 'ima-adpcm' })
+  domain.voiceListener({ channel: 'voice', bytes: voicePacket(3, 10) })
+  for (const session of domain.sessions.get(3) ?? []) session.startedAt -= 30_000
+
+  await handlers.get(MSG.VOICE_END)({ sessionId: 3, maxRms: 100, seqGaps: 0 }, { msgId: 1, channel: 0, reply: async () => {} })
+
+  assert.equal(speech.calls.length, 1, '30 秒的录音必须照常转写，不能被静默丢弃')
+  assert.equal(domain.sessions.has(3), false, '消费完后应清掉该 sessionId 的队列')
+  await domain.dispose()
+})
+
+test('陈旧会话清理仍然有效：远超上限的孤儿会话照样丢弃', async () => {
+  const speech = fakeSpeech({ text: '不该出现' })
+  const { domain, handlers } = makeDomain({
+    speechToText: speech,
+    voice: { keepAudio: false },
+  })
+  handlers.get(MSG.VOICE_BEGIN)({ sessionId: 4, sampleRate: 16000, bits: 16, channels: 1, codec: 'ima-adpcm' })
+  domain.voiceListener({ channel: 'voice', bytes: voicePacket(4, 10) })
+  // 回拨 5 分钟：voice.end 早已丢失的残留会话，必须被清理而不是喂给 assembleWav
+  for (const session of domain.sessions.get(4) ?? []) session.startedAt -= 300_000
+
+  await handlers.get(MSG.VOICE_END)({ sessionId: 4, maxRms: 100, seqGaps: 0 }, { msgId: 1, channel: 0, reply: async () => {} })
+
+  assert.equal(speech.calls.length, 0, '孤儿会话不该进转写')
+  await domain.dispose()
+})
+
+test('陈旧窗口必须长于设备端录音上限（否则长录音必然被误杀）', async () => {
+  const { AUDIO } = await import('../protocol/constants.js')
+  // voice.js 里 STALE_SESSION_MS = AUDIO.MAX_SECONDS * 1000 + 30_000。
+  // 这条断言把"上限"与"会话存活期"的耦合写死：谁把上限调大而忘了调窗口，这里就红。
+  assert.ok(AUDIO.MAX_SECONDS >= 30, `录音上限应至少 30s，当前 ${AUDIO.MAX_SECONDS}`)
+  assert.equal(
+    AUDIO.MAX_SECONDS * 1000 + 30_000,
+    60_000,
+    '会话存活期应为录音上限 + 30s 余量',
+  )
+})
+
 test('归档默认值：keepAudio 未显式配置时为开启（用户决策）', async () => {
   const { normalizeConfig } = await import('../config.js')
   const config = normalizeConfig({})
