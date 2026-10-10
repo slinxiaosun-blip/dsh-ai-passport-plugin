@@ -256,8 +256,23 @@ export class VoiceDomain {
         const deviceMaxRms = Number.isFinite(Number(message.maxRms)) ? Number(message.maxRms) : null
 
         try {
-          const wav = assembleWav(session)
+          // 上限（voice.maxSeconds）换算成 PCM 字节数。设备端已有 30s 自律，这里是
+          // 主机侧兜底：把 maxSeconds 调小就能进一步压短单次转写的长度。
+          const maxSeconds = Number(this.config.voice?.maxSeconds)
+          const maxPcmBytes = Number.isFinite(maxSeconds) && maxSeconds > 0
+            ? Math.floor(maxSeconds * session.format.sampleRate * 2)
+            : 0
+          const wav = assembleWav(session, { maxPcmBytes })
           if (!wav) throw new Error('录音为空或丢片过多')
+
+          // 超限时截断而非丢弃：用户已经说了一长段，直接丢掉等于白说。
+          if (wav.truncated) {
+            this.logger(
+              'warn',
+              `[voice] 录音 ${(wav.decodedPcmBytes / (session.format.sampleRate * 2)).toFixed(1)}s ` +
+              `超过 maxSeconds=${maxSeconds}s，已截断后转写`,
+            )
+          }
 
           // 误碰收束：PTT 短于 500ms 的按压不进转写（与参考项目 PTT_MIN_TALK_MS 同值）。
           // 主页确定键现在是"按住说话"，日常误点很常见；让它进转写只会在设备上
@@ -734,18 +749,37 @@ export class VoiceDomain {
  * 音频按**到达顺序**拼接（见 #onVoiceBytes 的说明：一条录音跨多条 BLE 消息，
  * 4bit seq 每条消息都重置，不能用它排序）。BLE 对同一 notify 特征值按序送达。
  * 只需校验：至少有一片、且拼出的字节够一个 ADPCM 块头 —— 否则说明根本没收到音频。
+ *
+ * `options.maxPcmBytes` 给一个上限（voice.maxSeconds 换算而来）：超出的尾部直接丢掉，
+ * 并在返回值里用 `truncated` / `decodedPcmBytes` 如实标出，供调用方记日志。
  */
-export function assembleWav(session) {
+export function assembleWav(session, options = {}) {
   const parts = session?.parts
   if (!parts || parts.length === 0) return null
 
   const compressed = Buffer.concat(parts)
   if (compressed.length < 4) return null   // 不足一个 ADPCM 块头
-  const pcm = decodeImaAdpcm(compressed)
+  const decoded = decodeImaAdpcm(compressed)
+
+  // 上限截断（voice.maxSeconds）：设备端自律之外，主机侧再兜一道。
+  // 截在解码后的 PCM 上，所以 pcmBytes 与下游的时长/归档/识别全部自动一致，
+  // 不会出现"归档是全段、转写是半段"这类不一致。
+  const maxPcmBytes = Number(options.maxPcmBytes)
+  let pcm = decoded
+  if (Number.isFinite(maxPcmBytes) && maxPcmBytes > 0 && decoded.length > maxPcmBytes) {
+    // 16bit 单声道下 sampleRate × 秒恒为偶数；这里再向下取偶，防御 8bit 之类的位深。
+    pcm = decoded.subarray(0, maxPcmBytes - (maxPcmBytes % 2))
+  }
 
   const { sampleRate, bits, channels } = session.format
   const bytes = Buffer.from(encodeWav(pcm, sampleRate, bits, channels))
-  return { bytes, pcmBytes: pcm.length, compressedBytes: compressed.length }
+  return {
+    bytes,
+    pcmBytes: pcm.length,
+    compressedBytes: compressed.length,
+    truncated: pcm.length < decoded.length,
+    decodedPcmBytes: decoded.length,
+  }
 }
 
 /**

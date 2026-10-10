@@ -89,7 +89,8 @@ http://127.0.0.1:19387/dsh-passport
 | `transport` | `bridge` | `bridge`（子进程）/ `mock`（无硬件联调）/ `noble`（进程内） |
 | `autoConnect` | `true` | 插件加载后自动扫描连接 |
 | `tasks.maskTitles` | `false` | 设备上只显示"任务 xxxx"，适合公共场合 |
-| `voice.autoSend` | `false` | 识别完直接下发，省掉设备上再按一次确定 |
+| `voice.directSend` | `true` | 设备识别结果卡「双击确定」= 整段替换草稿并发送 |
+| `voice.maxSeconds` | `30` | 单次转写长度上限（秒），超限截断；固件端自律同样是 30s |
 
 完整配置表与语音识别（SenseVoice 本地模型）启用方式见
 [docs/03-构建与烧录.md](docs/03-构建与烧录.md) 与 [docs/04-桌面客户端集成.md](docs/04-桌面客户端集成.md)。

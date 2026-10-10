@@ -89,6 +89,37 @@ test('空会话 / 不足一个块头 → 返回 null（不拿残缺音频去猜�
   assert.equal(assembleWav(s), null, '不足块头返回 null')
 })
 
+test('maxPcmBytes 超限 → 截断尾部并如实标记 truncated', () => {
+  const session = newSession()
+  session.parts.push(adpcmBytes(16))
+  const full = assembleWav(session)
+  assert.ok(!full.truncated, '不传上限时不该截断')
+
+  // 上限取整到偶数字节（16bit 单声道下 sampleRate × 秒 本就为偶）
+  // 16 数据字节 → 64 字节 PCM，故上限必须小于 64 才会真的截断
+  const cap = 32
+  const cut = assembleWav(session, { maxPcmBytes: cap })
+  assert.equal(cut.truncated, true, '超限应标记 truncated')
+  assert.equal(cut.pcmBytes, cap, 'PCM 截到上限字节数')
+  assert.equal(cut.decodedPcmBytes, full.pcmBytes, '保留截断前的完整长度供日志')
+  assert.equal(cut.compressedBytes, full.compressedBytes, '压缩字节不受截断影响')
+  assert.equal(cut.bytes.length, 44 + cap, 'WAV = 44 字节头 + 截断后的 PCM')
+
+  // 上限远大于实际长度 → 不截断
+  const loose = assembleWav(session, { maxPcmBytes: 1 << 20 })
+  assert.equal(loose.truncated, false, '上限宽松时不截断')
+  assert.equal(loose.pcmBytes, full.pcmBytes, 'PCM 保持完整')
+
+  // 非法上限（0 / NaN / 负数 / 未传）→ 退回不截断，而不是把音频清空
+  for (const bad of [0, -1, Number.NaN, undefined]) {
+    assert.equal(
+      assembleWav(session, { maxPcmBytes: bad }).pcmBytes,
+      full.pcmBytes,
+      `非法上限 ${bad} 应退回完整音频`,
+    )
+  }
+})
+
 test('ADPCM 解码：块头 + 数据 → 采样数正确', () => {
   const dataLen = 8
   const adpcm = adpcmBytes(dataLen)

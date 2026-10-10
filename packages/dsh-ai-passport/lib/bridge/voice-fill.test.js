@@ -60,8 +60,16 @@ function makeDomain({ voice = {}, speechToText } = {}) {
 
 /** 伪造一个识别服务：providers 里给一个"已就绪"的本地提供者。 */
 function fakeSpeech({ ready = true, phase = null, providerId = 'sensevoice-local', text = '' } = {}) {
+  // 每次转写收到的音频字节数（含 44 字节 WAV 头），供上限截断这类断言核对。
+  const calls = []
   return {
-    transcribe: async () => ({ text }),
+    calls,
+    // 宿主侧契约是 resolve(request) → spec → transcribe(spec)；这里直通，不做挑选逻辑。
+    resolve: (request) => request,
+    transcribe: async (spec) => {
+      calls.push(spec?.audio?.length ?? 0)
+      return { text }
+    },
     snapshot: () => ({
       providers: [{
         id: providerId,
@@ -316,15 +324,45 @@ function voicePacket(sessionId, blocks = 10) {
 }
 
 /** 跑完一次"按下说话"：voice.begin → 音频分片 → voice.end（内部会解码并转写）。 */
-async function driveSession(domain, handlers, sessionId) {
+async function driveSession(domain, handlers, sessionId, blocks = 10) {
   handlers.get(MSG.VOICE_BEGIN)({ sessionId, sampleRate: 16000, bits: 16, channels: 1, codec: 'ima-adpcm' })
-  domain.voiceListener({ channel: 'voice', bytes: voicePacket(sessionId) })
+  domain.voiceListener({ channel: 'voice', bytes: voicePacket(sessionId, blocks) })
   await handlers.get(MSG.VOICE_END)({ sessionId, maxRms: 120, seqGaps: 0 }, { msgId: 1, channel: 0, reply: async () => {} })
 }
 
 function tmpAudioDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ap-audio-'))
 }
+
+test('voice.maxSeconds 生效：超限录音截断到上限再转写（不整段丢弃）', async () => {
+  // 每块 504 数据字节 → 2016 字节 PCM；16 块 = 32256 字节 ≈ 1.008 秒
+  const speech = fakeSpeech({ text: '好的' })
+  const { domain, handlers } = makeDomain({
+    speechToText: speech,
+    voice: { maxSeconds: 1, keepAudio: false },
+  })
+  await driveSession(domain, handlers, 1, 16)
+
+  assert.equal(speech.calls.length, 1, '超限也要转写一次，不能直接丢弃')
+  // WAV = 44 字节头 + 截断到 1 秒的 PCM（16000 × 2 × 1）
+  assert.equal(speech.calls[0], 44 + 32_000, '转写收到的音频应被截到 maxSeconds')
+
+  await domain.dispose()
+})
+
+test('voice.maxSeconds 宽松时不做任何截断', async () => {
+  const speech = fakeSpeech({ text: '好的' })
+  const { domain, handlers } = makeDomain({
+    speechToText: speech,
+    voice: { maxSeconds: 30, keepAudio: false },
+  })
+  await driveSession(domain, handlers, 2, 16)
+
+  assert.equal(speech.calls.length, 1, '应转写一次')
+  assert.equal(speech.calls[0], 44 + 32_256, '未超 30 秒上限，音频保持完整')
+
+  await domain.dispose()
+})
 
 test('归档默认值：keepAudio 未显式配置时为开启（用户决策）', async () => {
   const { normalizeConfig } = await import('../config.js')

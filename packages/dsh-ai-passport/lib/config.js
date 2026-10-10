@@ -32,7 +32,10 @@ const DEFAULTS = Object.freeze({
     fallbackPrompt: true,
     providerId: '',
     language: 'zh',
-    maxSeconds: 15,
+    // 主机侧转写长度上限。设备端 MAX_MS（30s）是自律，这里是兜底：
+    // 超出的尾部在解码后的 PCM 上截断，只转写前 maxSeconds 秒，不丢弃整段录音。
+    // 调小它 = 进一步压短单次识别长度；调大不会让设备录更久（那是固件里写死的）。
+    maxSeconds: 30,
     // 音频归档（用户决策：**默认开启**）：每次成功解码的录音写一组 .wav + .adpcm
     // 到 audioDir（空 = 挂件目录下的 audio/），并按 audioKeepFiles 自动清理最旧的若干组。
     // 上限可控：默认 20 组 ≈ 2.7MB（一组约 108KB wav + 27KB adpcm）。
@@ -155,7 +158,7 @@ export async function loadConfigSchema() {
           fallbackPrompt: z.boolean().default(true),
           providerId: z.string().default(''),
           language: z.string().default('zh'),
-          maxSeconds: z.natural().min(1).max(120).default(15),
+          maxSeconds: z.natural().min(1).max(120).default(30),
           keepAudio: z.boolean().default(true),
           audioDir: z.string().default(''),
           audioKeepFiles: z.natural().min(1).max(500).default(20),
