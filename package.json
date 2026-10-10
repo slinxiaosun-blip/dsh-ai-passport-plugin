@@ -1,6 +1,6 @@
 {
   "name": "dsh-ai-passport-workspace",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "AI Passport × DeepSeek Harness 联动：DSH 插件 + 固件应用",
