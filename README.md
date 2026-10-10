@@ -103,7 +103,7 @@ http://127.0.0.1:19387/dsh-passport
 | DSH 桌面版 | `0.2.0-rc.2` | 插件 API 基线，开发时以它为准；macOS 与 Windows 同一份插件代码 |
 | dsh CLI | `0.1.7-rc.2` | `dsh --version` 实测 |
 | 插件（本仓） | `1.1.0` | `packages/dsh-ai-passport/package.json` |
-| 设备固件 | `1.1.0` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
+| 设备固件 | `1.2.0` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
 | BLE 协议 | `v1` | 双端常量 `PROTOCOL_VERSION` ↔ `AP_PROTOCOL_VERSION`，取较小值运行 |
 | 固件基线 | `main @ 0b9e4c8` | 上游 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport) |
 | Node | ≥ 20 | 开发机 22.22.2；DSH 桌面版内置 Node 24.21.0 |
@@ -115,6 +115,11 @@ http://127.0.0.1:19387/dsh-passport
   （安装器 junction/symlink 自适应、桥进程 Node 探测平台化、报错指引分平台）；
   设备固件行为不变、一次烧录两端通用，`1.1.0` 仅是版本对齐。
 - `1.0.0` —— 阶段 A/B/C 全功能首个版本（任务台/审批/余额/语音/配对）。
+
+> 插件仍为 `1.1.0`，本次未改动插件代码。设备固件已发布 `1.2.0`
+> （[ai-passport-dsh · v1.2.0-dsh-passport](https://github.com/slinxiaosun-blip/ai-passport-dsh/releases/tag/v1.2.0-dsh-passport)）：
+> 录音上限 15s → 30s，并取消静音 1.2s 自动结束 —— 说话中途的停顿不再被切断。
+> 协议 v1 未变，**插件无需更新**。该固件已通过构建与静态检查，尚未做真机验证。
 
 > 插件依赖 DSH `0.2.0-rc.x` 的 `ctx.webServer` / `speechToText` / `deepseekAccount`
 > 等宿主 API。DSH 升级前先跑 `npm test`（mock 联调）+ [docs/07](docs/07-设备端验收用例.md)
