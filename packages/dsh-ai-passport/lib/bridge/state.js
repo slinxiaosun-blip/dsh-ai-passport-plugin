@@ -36,8 +36,35 @@ import { MSG, TASK_STATE } from '../protocol/constants.js'
 /** 「已完成」在屏幕上停留的时长，之后回落到「空闲」。 */
 const COMPLETED_LINGER_MS = 8000
 
+/**
+ * 「不忙」持续多久才算真的结束。
+ *
+ * ★ 这里走过一次弯路，记下来免得再犯：
+ *   一度以为这台 DSH「没有 `turn/end`」，于是把 status(false) 当唯一结束信号，
+ *   并把它改成"false 不结束"—— 结果任务结束后设备一直挂「运行中」。
+ *   真因不在 DSH：`stateTrace` 只留 12 条，我看的时候任务还没结束，
+ *   环里自然只有 step/tool/job。把环撑大后 `turn/end` 清清楚楚躺在那儿
+ *   （13:46:17.532 turn/end → .541 status:idle）。
+ *   **环形缓冲的窗口长度会伪造出"事件不存在"的结论。**
+ *
+ * 因此结束有两条路，谁先到谁算：
+ *   ① `turn/end` —— 真实终点，立即进「已完成」；
+ *   ② `api-session/status` 的 false —— 兜底。它不能当即当真：工具调用之间
+ *      可能闪一下 false，当真就会把运行中打回空闲、把计时锚点清掉。
+ *      故先记时刻并起短定时器，IDLE_END_MS 之后仍然不忙才判定结束。
+ *
+ * 闪断被吸收，没有 turn/end 的宿主最多晚 1.2 秒可见。
+ */
+const IDLE_END_MS = 1200
+
+/** `stateTrace` 保留的条目数。太小会把整轮生命周期挤掉（上面那条弯路的起因）。 */
+const TRACE_LIMIT = 40
+
+/** `turnTrace` 保留的边界条数。只记 turn/status，噪声为零，可一眼看完整轮次。 */
+const TURN_TRACE_LIMIT = 20
+
 export class StateDomain {
-  constructor({ link, logger, domainState }) {
+  constructor({ link, logger, domainState, idleEndMs = IDLE_END_MS }) {
     // 用 link 而不是裸 transport：发送要经过链路层（含载荷上限校验、ACK 记账、
     // 发送队列节流），直接操作 transport 会绕过这些保证。
     this.link = link
@@ -45,9 +72,28 @@ export class StateDomain {
     this.logger = logger ?? (() => {})
     this.ctx = null
     this.unsubscribes = []
+    /** 「不忙」判定窗口。测试里调小，避免等真实时间。 */
+    this.idleEndMs = idleEndMs
+    this.idleTimer = null
 
     /** 正在运行的会话 id 集合 —— 用集合而不是计数，避免重复事件把计数搞乱。 */
     this.running = new Set()
+    /**
+     * 运行中会话的起点表：sessionId → { at, reliable }。
+     *
+     * ★ 为什么起点的"可靠"要单独记（reliable）：
+     *   真实起点只有 `turn/start` 能给。而插件可能在任务跑了一半才启动
+     *   （DSH 重启、插件热重载），此时只能靠 `api-session/status(true)` 的
+     *   首次观察到点 —— 那是"我看见它时"而不是"它开始时"。把两者混为一谈，
+     *   设备上就会显示一个偏小的时长，看起来精确、其实是错的。
+     *   因此不可靠的起点会在设备端显示成「≥ MM:SS」。
+     *
+     * ★ 为什么不跟链路一起清空：
+     *   断线期间任务仍在电脑上跑，起点依然有效；清掉会让重连后的计时
+     *   从零重来（这正是"掉线一分钟，时长少一分钟"的来源）。
+     *   只有插件卸载（detach）才清。
+     */
+    this.runStarts = new Map()
     /** 当前是否有审批挂起（由 ApprovalDomain 通过 setApproval 告知）。 */
     this.approvalTitle = null
     /** 最近一次结束的会话标题，用于「已完成」状态下的补充说明。 */
@@ -87,6 +133,13 @@ export class StateDomain {
       }
     }
     this.unsubscribes.length = 0
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer)
+      this.idleTimer = null
+    }
+    // 起点表只在这里清：插件卸载意味着"观察终止"，重新加载时按首次观察重算。
+    this.runStarts.clear()
+    this.running.clear()
     if (this.completedTimer) {
       clearTimeout(this.completedTimer)
       this.completedTimer = null
@@ -119,9 +172,18 @@ export class StateDomain {
     this.unsubscribes.push(
       ctx.on('api-session/status', (sessionId, running) => {
         if (running) {
+          this.#trace('status:run', sessionId)
+          this.#traceTurn('status:run', sessionId)
           this.running.add(sessionId)
+          // 与 turn/start 重复到达是常态（真实 DSH 两条都会发）：
+          // 已有记录就保留，绝不因为后到的 status 把 reliable 降级或把起点推后。
+          this.#markStart(sessionId, false)
         } else {
-          this.running.delete(sessionId)
+          this.#trace('status:idle', sessionId)
+          this.#traceTurn('status:idle', sessionId)
+          // 不立刻结束：先记时刻 + 起短定时器（见 IDLE_END_MS 的说明）。
+          // 闪断被吸收，真结束在 idleEndMs 后判定。
+          this.#markIdle(sessionId)
         }
         this.push()
       }),
@@ -132,15 +194,21 @@ export class StateDomain {
     const sessionId = session?.sessionId ?? session?.id ?? event?.sessionId
     if (!sessionId) return
     const kind = event?.kind ?? event?.type
+    this.#trace(`event:${kind}`, sessionId)
 
     switch (kind) {
       case 'turn/start':
+        this.#traceTurn('turn/start', sessionId)
         this.running.add(sessionId)
+        // 真实起点：这条事件只在轮次真正开始时发，可靠。
+        this.#markStart(sessionId, true)
         this.lastCompletedTitle = ''
         this.push()
         break
       case 'turn/end': {
+        this.#traceTurn('turn/end', sessionId)
         this.running.delete(sessionId)
+        this.runStarts.delete(sessionId)
         // 记下刚结束的会话标题，让「已完成」那一行能说清是哪个任务。
         // 标题可能出现在三个位置：事件里的 session 快照、projections、或只有 id
         // （此时退回会话控制器查一次）。DSH 各版本给的事件形状不完全一致，
@@ -222,13 +290,135 @@ export class StateDomain {
     }
   }
 
+  /**
+   * 记录会话起点。已存在就保留 —— 先到的那条更接近真实开始。
+   *
+   * 只有 `turn/start` 能把 reliable 从 false 提升到 true（它是唯一的真实起点）；
+   * 反向（true → false）永远不允许，否则"明明知道真实起点"会被后到的
+   * `api-session/status` 降级成「≥」。
+   */
+  /**
+   * 记一条事件轨迹（真机排障用，随 state.json 一起暴露）。
+   *
+   * 计时这条链路上「设备显示什么」和「主机收到什么」隔着 BLE，光看结果只能猜。
+   * 保留最近 TRACE_LIMIT 条事件，就能看出 DSH 发了哪些事件、
+   * status 是不是成对刷 —— 比反复重启试错快得多。
+   *
+   * ★ 限度别调小：窗口盖不住一整轮时，看不到的事件会被误判成"不存在"。
+   */
+  #trace(kind, id) {
+    if (!this.domainState) return
+    const list = this.domainState.stateTrace ?? (this.domainState.stateTrace = [])
+    list.push({ t: Date.now(), k: kind, id: String(id ?? '') })
+    if (list.length > TRACE_LIMIT) list.splice(0, list.length - TRACE_LIMIT)
+  }
+
+  /**
+   * 记一条**轮次边界**（turn/start、turn/end、status:run、status:idle）。
+   *
+   * 与 #trace 分开的理由：一轮里 step/tool/job 能刷几十条，把边界信息淹掉。
+   * 边界单独一条链，长度就够覆盖好几轮，排查"起点从哪来、结束判没判"时
+   * 一眼就能看完整，不必再靠 BLE 另一头猜。
+   */
+  #traceTurn(kind, id) {
+    if (!this.domainState) return
+    const list = this.domainState.turnTrace ?? (this.domainState.turnTrace = [])
+    list.push({ t: Date.now(), k: kind, id: String(id ?? '') })
+    if (list.length > TURN_TRACE_LIMIT) list.splice(0, list.length - TURN_TRACE_LIMIT)
+  }
+
+  #markStart(sessionId, reliable) {
+    const existing = this.runStarts.get(sessionId)
+    if (existing) {
+      if (reliable) existing.reliable = true
+      existing.idleAt = 0   // 又跑起来了，静默计时作废
+      return
+    }
+    this.runStarts.set(sessionId, { at: Date.now(), reliable: Boolean(reliable), idleAt: 0 })
+  }
+
+  /**
+   * 记下「这一刻它不忙」，并在 idleEndMs 后复查。
+   *
+   * 只打时间戳、不当即删记录：false 可能只是工具调用之间的空隙，
+   * 当即删掉就会把起点推到下一次 true，计时从 0 重来。
+   */
+  #markIdle(sessionId) {
+    const record = this.runStarts.get(sessionId)
+    if (!record) return
+    if (!record.idleAt) record.idleAt = Date.now()
+    if (this.idleTimer) return
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null
+      if (this.#pruneIdle()) this.push()
+    }, this.idleEndMs)
+    this.idleTimer.unref?.()   // 定时器不该拖住宿主退出
+  }
+
+  /**
+   * 摘掉「不忙」已超过 idleEndMs 的会话 —— 这才是真正的结束。
+   *
+   * @returns {boolean} 是否真的摘掉了 —— 摘了说明状态要重推
+   */
+  #pruneIdle() {
+    const now = Date.now()
+    let changed = false
+    for (const [sessionId, record] of this.runStarts) {
+      if (!record.idleAt || now - record.idleAt < this.idleEndMs) continue
+      this.runStarts.delete(sessionId)
+      this.running.delete(sessionId)
+      // 结束后走「已完成」停留，让用户看到结果而不是瞬间跳回空闲
+      this.completedUntil = now + COMPLETED_LINGER_MS
+      changed = true
+    }
+    return changed
+  }
+
+  /**
+   * 当前这一轮忙碌的已运行时长。
+   *
+   * 取**最早开始**的那个会话：单会话时就是该任务时长；多会话时表达
+   * "这轮忙了多久"，与标题「N 个任务执行中」说的是同一件事。
+   */
+  #elapsed() {
+    if (this.running.size === 0) return { elapsedMs: null, sinceReliable: false }
+    let earliest = null
+    for (const sessionId of this.running) {
+      const record = this.runStarts.get(sessionId)
+      if (!record) continue
+      if (!earliest || record.at < earliest.at) earliest = record
+    }
+    if (!earliest) return { elapsedMs: null, sinceReliable: false }
+
+    // ★ 起点不可靠就**不下发** elapsedMs（设备因此不显示计时）。
+    //
+    //   不可靠 = 我们这个起点是「第一次看见它在跑」，真实开始时间更早，
+    //   于是 elapsedMs 会系统性偏小。设备端按设计稿只印纯 `MM:SS`，
+    //   没有任何位置再加 `~` 说明"这是近似值" —— 一个精确到秒却偏小的数字，
+    //   比不显示更容易误导（会撒谎的指示器比没有更糟）。
+    //
+    //   触发场景很少：插件在会话已经开始执行之后才启动、或从未收到过
+    //   该会话的 turn/start。此时等下一次 turn/start 就能恢复显示。
+    if (!earliest.reliable) return { elapsedMs: null, sinceReliable: false }
+
+    return {
+      elapsedMs: Math.max(0, Date.now() - earliest.at),
+      sinceReliable: true,
+    }
+  }
+
   /** 按优先级算出当前状态。 */
   current() {
+    // 静默太久的会话在这里摘掉（turn/end 缺失时的兜底）。
+    this.#pruneIdle()
     if (this.approvalTitle) {
       return { state: TASK_STATE.WAITING_APPROVAL, title: this.approvalTitle }
     }
     if (this.running.size > 0) {
-      return { state: TASK_STATE.RUNNING, title: `${this.running.size} 个任务执行中` }
+      const { elapsedMs, sinceReliable } = this.#elapsed()
+      // 待审批时不计时显示（审批页有自己的内容），但锚点保留：
+      // 审批结束回到「运行中」时，时长接着走，而不是从零开始。
+      return { state: TASK_STATE.RUNNING, title: `${this.running.size} 个任务执行中`, elapsedMs, sinceReliable }
     }
     if (Date.now() < this.completedUntil) {
       return { state: TASK_STATE.COMPLETED, title: this.lastCompletedTitle || '任务刚刚结束' }
@@ -262,16 +452,54 @@ export class StateDomain {
     //   force 也一样抑制：链路重连时补推状态会打断录音显示，同样不能放。
     if (this.deviceRecording) return
     if (this.link.snapshot().state !== 'connected') return
-    const { state, title } = this.current()
-    if (!options.force && state === this.lastSent) return
-    this.lastSent = state
+    const { state, title, elapsedMs, sinceReliable } = this.current()
+
+    // 去重键 = 状态 + 标题 + 时长的秒数。
+    //
+    // ★ 为什么不再只比 state：
+    //   ① 任务数从 1 变 2 时状态仍是 running，标题该变却被吞掉
+    //      （原实现的实际问题，用户在设备上看到的一直是"1 个任务执行中"）；
+    //   ② 起点表变化（最早那个任务结束）会让时长基准前移，也要重播一次
+    //      种子，否则设备会带着旧锚点一直走下去。
+    //   这里不比较毫秒、只比较秒：同一秒内的重复事件仍然被合并。
+    //
+    //   ★ 与"起点不可靠就不下发"互补的一处细节：没有种子时签名不带秒数
+    //     （`running|1 个任务执行中`），一旦 `turn/start` 把起点升级为可靠、
+    //     签名变成 `…|3`，两者必然不同 —— 所以那次"补种子"不会被去重吞掉。
+    //     反过来（先可靠、后不可靠）不会发生：`#markStart` 只升不降。
+    const signature = elapsedMs == null
+      ? `${state}|${title}`
+      : `${state}|${title}|${Math.floor(elapsedMs / 1000)}`
+    if (!options.force && signature === this.lastSent) return
+    this.lastSent = signature
+
     // 同步给面板快照：面板与设备显示的必须是**同一个**状态，
     // 否则用户在两边看到不一致时会怀疑哪边是真的。
-    if (this.domainState) this.domainState.taskState = { state, title, at: Date.now() }
+    const payload = { state, title }
+    if (elapsedMs != null) {
+      payload.elapsedMs = elapsedMs
+      payload.sinceReliable = sinceReliable
+    }
+    // 设备没有 RTC：状态条上那个 HH:MM 只能由主机给。
+    // ★ 发「UTC 秒 + 时区偏移分钟」而不是格式化好的 "20:17"：
+    //   设备自己走秒，字符串一过时就是错的；给种子则设备能一直算下去。
+    //   也不发毫秒 —— 固件侧 `long` 只有 32 位，秒级够用且不会在 2038 前溢出。
+    payload.hostEpochSec = Math.floor(Date.now() / 1000)
+    payload.hostTzOffsetMin = -new Date().getTimezoneOffset()
+    if (this.domainState) {
+      this.domainState.taskState = {
+        state,
+        title,
+        at: Date.now(),
+        hostEpochSec: payload.hostEpochSec,
+        hostTzOffsetMin: payload.hostTzOffsetMin,
+        ...(elapsedMs != null ? { elapsedMs, sinceReliable } : {}),
+      }
+    }
     // 不 await：状态推送是尽力而为的通知，调用方（事件回调）不该被网络耗时阻塞。
     // ACK 由链路层负责，失败只记一条 debug 日志。
     void this.link
-      .send(MSG.TASK_STATE, { state, title })
+      .send(MSG.TASK_STATE, payload)
       .catch((error) => this.logger('debug', `[state] 状态下发失败：${error?.message ?? error}`))
   }
 

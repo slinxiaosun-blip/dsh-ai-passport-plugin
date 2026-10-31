@@ -293,6 +293,11 @@ export function createRuntime({ config, logger }) {
       // 拦截轨迹：审批/追问的瀑布到底走没走到我们（真机排障用）
       approvalTrace: domainState.approvalTrace ?? [],
       questionsTrace: domainState.questionsTrace ?? [],
+      // 任务状态事件轨迹：DSH 到底发了 turn/start 还是 turn/end、status 刷得多密
+      stateTrace: domainState.stateTrace ?? [],
+      // 轮次边界专链（只记 turn/* 与 status:*）：一轮里有几十条 step/tool，
+      // 边界混在里面看不清；这条链长度够覆盖好几轮，排查起点/结束直接看它。
+      turnTrace: domainState.turnTrace ?? [],
       config: {
         transport: config.transport,
         targetDeviceId: config.targetDeviceId,

@@ -22,6 +22,14 @@ export class PairingDomain {
   #storePath
   #link
   #logger
+  /**
+   * 本链路会话内是否已因 token 不符自动重置过一次。
+   *
+   * 没有这道闸会打成环：设备 token 不符 → 回 pair.required → 主机重置 →
+   * 设备换码 → 主机带着旧 token 再 hello → 又 pair.required …。
+   * 只要重置过一次就停手，把决定权交回用户（挂件里手动配）。
+   */
+  #tokenResetDone = false
 
   constructor({ link, logger, storePath }) {
     this.#link = link
@@ -63,9 +71,19 @@ export class PairingDomain {
         }
       }),
       this.#link.onMessage(MSG.PAIR_REQUIRED, (message) => {
+        const reason = String(message.reason ?? 'unpaired')
         this.needed = true
-        this.error = message.reason === 'token' ? 'token-mismatch' : null
-        this.#logger('warn', `[pairing] 设备要求配对（${message.reason ?? 'unpaired'}）`)
+        this.error = reason === 'token' ? 'token-mismatch' : null
+        this.#logger('warn', `[pairing] 设备要求配对（${reason}）`)
+        // 设备「自认为已配对、但 token 与本地不一致」时只回 pair.required，
+        // 不会自己亮配对码页。主机要是只把 needed 置 true，用户就会卡在
+        // 「本机未被该设备信任，需要重新配对」却看不到码 —— 死锁。
+        // 自动重置一次，设备才会清 token 并把新码显示出来。
+        if (reason === 'token' && !this.#tokenResetDone) {
+          this.#tokenResetDone = true
+          this.#logger('warn', '[pairing] token 不符，自动解除配对，让设备重新显示配对码')
+          void this.unpair()
+        }
       }),
       this.#link.onMessage(MSG.PAIR_OK, (message) => {
         const token = String(message.token ?? '')
@@ -81,6 +99,7 @@ export class PairingDomain {
         this.needed = false
         this.error = null
         this.remaining = null
+        this.#tokenResetDone = false   // 配对成功代表一轮结束，下次不符还能再自动重置
         this.#link.setHostToken?.(token)
         // 立刻用 token 重新握手：设备校验通过后才会处理业务消息
         this.#link.send(MSG.HELLO, { protocolVersion: 1, capabilities: 0, token }).catch(() => {})

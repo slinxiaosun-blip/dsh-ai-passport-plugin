@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 通行证 · 设备端 UI 2.0 圆角改版设计稿</title>
+<style>
+  :root{
+    /* 设备调色板（新） */
+    --bg:#0B0F14; --card:#121A26; --card2:#101823; --stroke:#223042; --hair:#1B2735;
+    --fg:#E8EEF5; --sub:#8FA3B8; --dim:#5A6B7D;
+    --acc:#3DDC84; --info:#4DB8FF; --warn:#FFB454; --err:#FF5D5D;
+    /* 旧调色板（对照用） */
+    --o-fg:#C8D6E5; --o-line:#243447; --o-acc:#38E07B; --o-panel:#111823;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#080B10;color:#DDE6F0;font:14px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:40px 48px 80px}
+  h1{font-size:26px;font-weight:700;letter-spacing:.5px}
+  h1 .v{font-size:13px;font-weight:600;color:#0B0F14;background:#3DDC84;border-radius:99px;padding:2px 10px;vertical-align:6px;margin-left:10px}
+  .sub{color:#8FA3B8;font-size:13px;margin-top:6px}
+  h2{font-size:18px;font-weight:700;margin:52px 0 6px;display:flex;align-items:center;gap:10px}
+  h2::before{content:"";width:4px;height:18px;border-radius:2px;background:#3DDC84}
+  .desc{color:#8FA3B8;font-size:13px;margin-bottom:22px;max-width:860px}
+  code,.mono{font-family:"SF Mono",Menlo,Consolas,monospace}
+
+  /* ── 设备帧：240×320 实际像素，1.6 倍展示 ───────────────────── */
+  .grid{display:flex;flex-wrap:wrap;gap:34px 38px}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:12px}
+  .cell .cap{font-size:13px;color:#8FA3B8}
+  .cell .cap b{color:#E8EEF5;font-weight:600}
+  .shot{width:384px;height:512px;position:relative;flex:none}
+  .scr{
+    position:absolute;left:0;top:0;width:240px;height:320px;transform:scale(1.6);transform-origin:0 0;
+    background:var(--bg);border-radius:12px;overflow:hidden;
+    box-shadow:0 0 0 9px #14181E, 0 0 0 10px #2A313A, 0 24px 60px rgba(0,0,0,.55);
+  }
+  .safe{position:absolute;left:10px;top:10px;width:220px;height:300px}
+  /* 安全区虚线参考（仅标注帧使用） */
+  .guides .safe{outline:1px dashed rgba(77,184,255,.45);outline-offset:0}
+
+  /* 通用元件 */
+  .hdr{position:absolute;left:0;top:0;width:220px;height:24px;display:flex;align-items:center;justify-content:space-between}
+  .hdr .t{font-size:15px;font-weight:700;color:var(--fg)}
+  .badge{font-size:9px;font-weight:600;border-radius:99px;padding:2px 8px;line-height:13px;letter-spacing:.5px}
+  .b-warn{background:rgba(255,180,84,.13);color:var(--warn);box-shadow:inset 0 0 0 1px rgba(255,180,84,.35)}
+  .b-err{background:rgba(255,93,93,.13);color:var(--err);box-shadow:inset 0 0 0 1px rgba(255,93,93,.4)}
+  .b-acc{background:rgba(61,220,132,.12);color:var(--acc);box-shadow:inset 0 0 0 1px rgba(61,220,132,.35)}
+  .b-info{background:rgba(77,184,255,.12);color:var(--info);box-shadow:inset 0 0 0 1px rgba(77,184,255,.35)}
+  .b-dim{background:rgba(143,163,184,.1);color:var(--sub);box-shadow:inset 0 0 0 1px rgba(143,163,184,.25)}
+
+  /* 状态条 */
+  .statrow{position:absolute;left:0;top:0;width:220px;height:22px;display:flex;align-items:center;gap:7px}
+  .sig{display:flex;align-items:flex-end;gap:2px;height:13px}
+  .sig i{width:3px;border-radius:1.5px;background:#2A3644}
+  .sig i.on{background:var(--acc)}
+  .sig i:nth-child(1){height:4px}.sig i:nth-child(2){height:7px}.sig i:nth-child(3){height:10px}.sig i:nth-child(4){height:13px}
+  .appname{font-size:11px;color:var(--sub);font-weight:600;letter-spacing:1px}
+  .batt{margin-left:auto;display:flex;align-items:center;gap:5px}
+  .batt .shell{width:20px;height:10px;border-radius:3px;box-shadow:inset 0 0 0 1px #3A4A5C;position:relative}
+  .batt .shell::after{content:"";position:absolute;right:-3px;top:2.5px;width:2px;height:5px;border-radius:1px;background:#3A4A5C}
+  .batt .lvl{position:absolute;left:1px;top:1px;bottom:1px;width:72%;border-radius:2px;background:var(--acc)}
+  .batt .pct{font-size:9px;color:var(--sub)}
+
+  /* 主页状态卡 */
+  .statecard{position:absolute;left:0;top:30px;width:220px;height:182px;border-radius:16px;background:var(--card);box-shadow:inset 0 0 0 1px var(--stroke)}
+  .statechip{position:absolute;left:14px;top:14px;display:flex;align-items:center;gap:5px;border-radius:99px;padding:3px 9px;font-size:9px;font-weight:600}
+  .statechip .dot{width:5px;height:5px;border-radius:99px;background:currentColor}
+  .statetext{position:absolute;left:16px;top:62px;font-size:27px;font-weight:800;letter-spacing:2px}
+  .statehint{position:absolute;left:16px;top:110px;right:14px;font-size:11px;color:var(--sub);line-height:17px}
+  /* 运行计时：等宽数字 + tabular-nums，秒数跳动时宽度不变，不会左右抖 */
+  .timer{position:absolute;right:14px;top:13px;font-size:15px;font-weight:600;color:var(--info);
+    font-family:"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums;letter-spacing:.5px}
+  .homefoot{position:absolute;left:0;top:220px;width:220px;height:76px;border-radius:14px;background:var(--card2);box-shadow:inset 0 0 0 1px var(--stroke);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px}
+  .homefoot .l{font-size:10px;color:var(--sub);letter-spacing:.5px}
+  .homefoot .l em{font-style:normal;color:var(--fg);font-weight:600}
+  .homefoot .sep{width:26px;height:1px;background:var(--hair)}
+
+  /* 按钮与列表行 */
+  .btn{position:absolute;left:0;width:220px;height:44px;border-radius:22px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;font-weight:600}
+  .btn-allow{background:rgba(61,220,132,.1);box-shadow:inset 0 0 0 1px #2E5C41;color:#7CEBA8}
+  .btn-deny{background:rgba(255,93,93,.07);box-shadow:inset 0 0 0 1px #5C2E2E;color:#FF8A8A}
+  .btn.sel{box-shadow:inset 0 0 0 2px currentColor}
+  .btn .caret{font-size:10px;opacity:.9}
+  .row{position:absolute;left:0;width:220px;height:30px;border-radius:10px;display:flex;align-items:center;padding:0 11px;font-size:11px;color:var(--sub)}
+  .row.sel{background:rgba(61,220,132,.1);box-shadow:inset 0 0 0 2px var(--acc);color:var(--fg);font-weight:600}
+  .row .rdot{width:5px;height:5px;border-radius:99px;background:var(--acc);margin-right:8px}
+  .row .rec{margin-left:auto;font-size:8px;color:var(--acc);background:rgba(61,220,132,.12);border-radius:99px;padding:1px 6px;font-weight:600}
+  .card{position:absolute;left:0;width:220px;background:var(--card);border-radius:14px;box-shadow:inset 0 0 0 1px var(--stroke)}
+  .foothint{position:absolute;left:0;bottom:0;width:220px;text-align:center;font-size:9px;color:var(--dim);letter-spacing:1px}
+
+  /* 分组列表（设置页） */
+  .group{position:absolute;left:0;width:220px;background:var(--card);border-radius:14px;box-shadow:inset 0 0 0 1px var(--stroke);overflow:hidden}
+  .grow{height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 13px;position:relative}
+  .grow + .grow::before{content:"";position:absolute;left:13px;right:0;top:0;height:1px;background:var(--hair)}
+  .grow .n{font-size:12px;color:var(--fg)}
+  .grow .v{font-size:11px;color:var(--sub)}
+  .grow.sel{background:rgba(61,220,132,.09)}
+  .grow.sel::after{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:2px;background:var(--acc)}
+
+  /* 键帽提示行 */
+  .keyrow{position:absolute;left:0;width:220px;height:24px;border-radius:99px;background:var(--card2);box-shadow:inset 0 0 0 1px var(--hair);
+    display:flex;align-items:center;gap:8px;padding:0 9px}
+  .keycap{width:17px;height:17px;border-radius:6px;background:#182636;box-shadow:inset 0 0 0 1px #2C3E52;display:flex;align-items:center;justify-content:center;
+    font-size:8px;color:var(--sub);font-weight:600;flex:none}
+  .keyrow .tx{font-size:10px;color:var(--sub)}
+
+  /* 麦克风 */
+  .micwrap{position:absolute;left:50%;top:86px;transform:translateX(-50%);width:104px;height:104px}
+  .micring{position:absolute;inset:0;border-radius:99px;box-shadow:inset 0 0 0 1px var(--stroke)}
+  .micring2{position:absolute;inset:12px;border-radius:99px;box-shadow:inset 0 0 0 1px var(--hair)}
+  .miccore{position:absolute;inset:24px;border-radius:99px;background:var(--card);box-shadow:inset 0 0 0 1px var(--stroke);
+    display:flex;align-items:center;justify-content:center}
+
+  /* Toast */
+  .veil{position:absolute;inset:0;background:rgba(4,8,12,.58)}
+  .toast{position:absolute;left:50%;top:104px;transform:translateX(-50%);width:188px;border-radius:16px;background:#17222F;
+    box-shadow:inset 0 0 0 1px #2A3A4E,0 10px 30px rgba(0,0,0,.5);padding:16px 14px 14px;text-align:center}
+  .toast .ic{width:30px;height:30px;border-radius:99px;background:rgba(61,220,132,.14);margin:0 auto 9px;display:flex;align-items:center;justify-content:center}
+  .toast .tt{font-size:12px;color:var(--fg);font-weight:600}
+  .toast .ts{font-size:10px;color:var(--sub);margin-top:4px}
+
+  /* ── 旧版（Before）复刻 ─────────────────────────────────────── */
+  .old .statrow{justify-content:flex-start;gap:8px}
+  .old .block{width:8px;height:8px;background:var(--o-acc)}
+  .old .appname{font-family:"SF Mono",Menlo,monospace;font-size:10px;color:var(--o-fg);letter-spacing:0}
+  .old .hline{position:absolute;left:0;width:220px;height:1px;background:var(--o-line)}
+  .old .bigstate{position:absolute;left:0;top:40px;font-family:"SF Mono",Menlo,monospace;font-size:26px;font-weight:700;color:#5A6B7D;letter-spacing:2px}
+  .old .hint{position:absolute;left:0;top:92px;font-size:11px;color:#5A6B7D;line-height:19px}
+  .old .footl{position:absolute;left:0;width:220px;font-size:10px;color:#5A6B7D;letter-spacing:.5px}
+
+  /* ── 标注（右侧导轨，不压 mockup 内容）─────────────────────── */
+  .annwrap{display:flex;gap:0;flex:none}
+  .rail{width:150px;height:512px;position:relative;margin-left:22px}
+  .rail .tick{position:absolute;left:-22px;width:22px;height:1px;background:rgba(77,184,255,.55)}
+  .ann{position:absolute;left:0;font-size:11px;color:#4DB8FF;background:rgba(10,16,23,.92);border-radius:99px;padding:2px 10px;
+    box-shadow:inset 0 0 0 1px rgba(77,184,255,.4);font-weight:600;white-space:nowrap}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:14px;font-size:12px;color:#8FA3B8;max-width:900px}
+  .legend b{color:#4DB8FF;font-weight:600}
+
+  /* ── 令牌表 ────────────────────────────────────────────────── */
+  .tokens{display:flex;gap:40px;flex-wrap:wrap;margin-top:6px}
+  .tokgroup h3{font-size:13px;color:#8FA3B8;font-weight:600;margin-bottom:10px;letter-spacing:1px}
+  .swatches{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .sw{display:flex;align-items:center;gap:8px;font-size:11px;color:#8FA3B8}
+  .sw i{width:26px;height:26px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+  .rads{display:flex;gap:10px;align-items:flex-end}
+  .rad{text-align:center;font-size:10px;color:#8FA3B8}
+  .rad i{display:block;width:34px;height:34px;background:var(--card);box-shadow:inset 0 0 0 1px var(--stroke);margin:0 auto 6px}
+  table{border-collapse:collapse;font-size:12.5px;min-width:640px;margin-top:8px}
+  th{color:#8FA3B8;font-weight:600;text-align:left;padding:8px 14px;border-bottom:1px solid #223042;white-space:nowrap}
+  td{padding:8px 14px;border-bottom:1px solid #17202C;color:#C6D2E0;vertical-align:top}
+  td b{color:#E8EEF5}
+  td .ok{color:#3DDC84;font-weight:600}
+  td .warn{color:#FFB454;font-weight:600}
+  .tblwrap{overflow-x:auto}
+  .note{background:rgba(77,184,255,.06);box-shadow:inset 0 0 0 1px rgba(77,184,255,.25);border-radius:12px;padding:14px 18px;font-size:13px;color:#B9C8D8;margin-top:18px;max-width:900px}
+  .note b{color:#E8EEF5}
+  .arrow{color:#5A6B7D;padding:0 4px}
+</style>
+</head>
+<body>
+
+<h1>AI 通行证 · 设备端 UI 2.0 设计稿 <span class="v">Rounded</span></h1>
+<p class="sub">dsh-ai-passport-plugin / ai-passport-dsh 固件 · 屏幕 240×320 · LVGL · 设计稿按 1:1 像素绘制（展示放大 1.6×）· 2026-10-31</p>
+
+<p class="desc" style="margin-top:24px;max-width:900px">
+改版方向：从「bit 极简」（硬边、无圆角、终端绿）升级为<b>类手机的圆角卡片语言</b>——圆角卡片分层、
+药丸徽章与按钮、键帽式提示、柔和的三层暗色表面。交互模型不变（三键：上/下/确定），
+所有页面职责与文案不变，只重画视觉层。
+</p>
+
+<!-- ══════════════════ 设计令牌 ══════════════════ -->
+<h2>1 · 设计令牌 Design Tokens</h2>
+<p class="desc">层级不再靠 1px 硬边框表达，改用「背景 → 卡片 → 浮层」三层表面色阶；描边只作为极淡的辅助。</p>
+
+<div class="tokens">
+  <div class="tokgroup">
+    <h3>色彩 · 表面与文字</h3>
+    <div class="swatches">
+      <div class="sw"><i style="background:#0B0F14"></i>UI_BG　#0B0F14 页面底</div>
+      <div class="sw"><i style="background:#101823"></i>UI_CARD2　#101823 次表面</div>
+      <div class="sw"><i style="background:#121A26"></i>UI_CARD　#121A26 卡片</div>
+      <div class="sw"><i style="background:#223042"></i>UI_STROKE　#223042 淡描边</div>
+      <div class="sw"><i style="background:#E8EEF5"></i>UI_FG　#E8EEF5 主文字</div>
+      <div class="sw"><i style="background:#8FA3B8"></i>UI_SUB　#8FA3B8 次文字</div>
+      <div class="sw"><i style="background:#5A6B7D"></i>UI_DIM　#5A6B7D 弱文字</div>
+      <div class="sw"><i style="background:#1B2735"></i>UI_HAIR　#1B2735 发丝线</div>
+    </div>
+  </div>
+  <div class="tokgroup">
+    <h3>色彩 · 语义（沿用四态语义）</h3>
+    <div class="swatches">
+      <div class="sw"><i style="background:#3DDC84"></i>UI_ACCENT　#3DDC84 在线/允许/完成</div>
+      <div class="sw"><i style="background:#4DB8FF"></i>UI_INFO　#4DB8FF 运行中</div>
+      <div class="sw"><i style="background:#FFB454"></i>UI_WARN　#FFB454 待审批/注意</div>
+      <div class="sw"><i style="background:#FF5D5D"></i>UI_ERR　#FF5D5D 拒绝/错误</div>
+    </div>
+  </div>
+  <div class="tokgroup">
+    <h3>圆角</h3>
+    <div class="rads">
+      <div class="rad"><i style="border-radius:4px"></i>R4 键帽内</div>
+      <div class="rad"><i style="border-radius:10px"></i>R10 列表行</div>
+      <div class="rad"><i style="border-radius:14px"></i>R14 卡片</div>
+      <div class="rad"><i style="border-radius:16px"></i>R16 大卡/浮层</div>
+      <div class="rad"><i style="border-radius:99px"></i>Full 药丸</div>
+    </div>
+  </div>
+  <div class="tokgroup">
+    <h3>间距与栅格</h3>
+    <div style="font-size:12px;color:#8FA3B8;line-height:2">
+      4px 基准栅格<br>
+      安全区 INSET 10px（外壳遮挡，不变）<br>
+      卡片内边距 14px · 列表行高 30px / 行距 4px<br>
+      主按钮高 44px（药丸）· 徽章高 18px
+    </div>
+  </div>
+  <div class="tokgroup">
+    <h3>字号（真机字体映射）</h3>
+    <table style="min-width:430px">
+      <tr><th>层级</th><th>设备字体</th><th>用途</th></tr>
+      <tr><td>XL</td><td class="mono">app_ui_font_xl 40px</td><td>状态大字 / 配对码</td></tr>
+      <tr><td>Title</td><td class="mono">CJK 20px</td><td>页面标题 / 选项文字</td></tr>
+      <tr><td>Body</td><td class="mono">CJK 16px</td><td>摘要 / 提示正文</td></tr>
+      <tr><td>Mini</td><td class="mono">ASCII 8px 点阵</td><td>徽章 / 键帽 / 百分比</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════ Before / After ══════════════════ -->
+<h2>2 · 主页改版前后对照</h2>
+<p class="desc">左：现状「bit 极简」——硬边色块 + 1px 分隔线 + 无圆角。右：2.0 圆角版——状态收进大卡片，徽章药丸化，底栏提示成为一张卡。</p>
+
+<div class="grid">
+  <div class="cell">
+    <div class="shot"><div class="scr old">
+      <div class="safe">
+        <div class="statrow">
+          <div class="sig"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+          <span class="appname">AI 通行证</span>
+          <div class="batt" style="margin-left:auto"><span class="pct mono">87%</span></div>
+        </div>
+        <div class="hline" style="top:28px"></div>
+        <div class="bigstate">空闲</div>
+        <div class="hint">没有任务在运行<br>一切正常，无需操作</div>
+        <div class="hline" style="top:241px"></div>
+        <div class="footl" style="top:250px">长按上键设置 下键看余额</div>
+        <div class="footl" style="top:270px">按住确定说话</div>
+      </div>
+    </div></div>
+    <div class="cap"><b>Before</b> · bit 极简（现状）</div>
+  </div>
+
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="statrow">
+          <div class="sig"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+          <span class="appname">AI 通行证</span>
+          <div class="batt"><div class="shell"><div class="lvl"></div></div><span class="pct mono">87%</span></div>
+        </div>
+        <div class="statecard">
+          <div class="statechip b-dim" style="color:#8FA3B8"><span class="dot"></span>空闲</div>
+          <div class="statetext" style="color:#8FA3B8">空闲</div>
+          <div class="statehint">没有任务在运行<br>一切正常，无需操作</div>
+        </div>
+        <div class="homefoot">
+          <div class="l"><em>上键</em> 设置 · <em>下键</em> 余额</div>
+          <div class="sep"></div>
+          <div class="l">按住 <em>确定</em> 说话</div>
+        </div>
+      </div>
+    </div></div>
+    <div class="cap"><b>After</b> · 2.0 Rounded（空闲态）</div>
+  </div>
+</div>
+
+<!-- ══════════════════ 主页标注 ══════════════════ -->
+<h2>3 · 主页结构与标注</h2>
+<p class="desc">主页四态（空闲/运行中/待审批/已完成）只换「徽章 + 大字 + 提示」的颜色与文案，卡片骨架完全一致——与现有 <code class="mono">app_ui_set_task_state()</code> 的聚合状态模型一一对应。</p>
+
+<div class="grid">
+  <div class="cell">
+    <div class="annwrap">
+      <div class="shot"><div class="scr guides">
+        <div class="safe">
+          <div class="statrow">
+            <div class="sig"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+            <span class="appname">AI 通行证</span>
+            <div class="batt"><div class="shell"><div class="lvl"></div></div><span class="pct mono">87%</span></div>
+          </div>
+          <div class="statecard">
+            <div class="statechip b-info"><span class="dot"></span>运行中</div>
+            <div class="timer mono">01:23</div>
+            <div class="statetext" style="color:#4DB8FF">运行中</div>
+            <div class="statehint">正在执行「重构登录模块」<br>Step 3/8 · 无需操作</div>
+          </div>
+          <div class="homefoot">
+            <div class="l"><em>上键</em> 设置 · <em>下键</em> 余额</div>
+            <div class="sep"></div>
+            <div class="l">按住 <em>确定</em> 说话</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="rail">
+        <div class="tick" style="top:32px"></div><div class="ann" style="top:24px">① 状态条 h22</div>
+        <div class="tick" style="top:80px"></div><div class="ann" style="top:72px">② 徽章药丸 Full</div>
+        <div class="tick" style="top:104px"></div><div class="ann" style="top:96px">②b 计时 mm:ss</div>
+        <div class="tick" style="top:144px"></div><div class="ann" style="top:136px">③ 状态卡 R16</div>
+        <div class="tick" style="top:240px"></div><div class="ann" style="top:232px">④ XL 大字 y62</div>
+        <div class="tick" style="top:368px"></div><div class="ann" style="top:360px">⑤ 底栏卡 R14</div>
+        <div class="tick" style="top:494px"></div><div class="ann" style="top:486px">⑥ 虚线=安全区 10</div>
+      </div>
+    </div>
+    <div class="cap"><b>主页 · 运行中</b>（结构标注）</div>
+  </div>
+
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="statrow">
+          <div class="sig"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+          <span class="appname">AI 通行证</span>
+          <div class="batt"><div class="shell"><div class="lvl"></div></div><span class="pct mono">87%</span></div>
+        </div>
+        <div class="statecard" style="box-shadow:inset 0 0 0 1px rgba(255,180,84,.28)">
+          <div class="statechip b-warn"><span class="dot"></span>待审批</div>
+          <div class="statetext" style="color:#FFB454">待审批</div>
+          <div class="statehint">AI 请求运行 Bash 命令<br>详情见电脑卡片</div>
+        </div>
+        <div class="homefoot">
+          <div class="l" style="color:#FFB454">等待授权请求…</div>
+          <div class="sep"></div>
+          <div class="l">审批页将自动弹出</div>
+        </div>
+      </div>
+    </div></div>
+    <div class="cap"><b>主页 · 待审批</b>（琥珀警示态）</div>
+  </div>
+
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="statrow">
+          <div class="sig"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+          <span class="appname">AI 通行证</span>
+          <div class="batt"><div class="shell"><div class="lvl"></div></div><span class="pct mono">87%</span></div>
+        </div>
+        <div class="statecard" style="box-shadow:inset 0 0 0 1px rgba(61,220,132,.3)">
+          <div class="statechip b-acc"><span class="dot"></span>已完成</div>
+          <div class="statetext" style="color:#3DDC84">已完成</div>
+          <div class="statehint">「重构登录模块」已完成<br>回电脑查看结果</div>
+        </div>
+        <div class="homefoot">
+          <div class="l"><em>上键</em> 设置 · <em>下键</em> 余额</div>
+          <div class="sep"></div>
+          <div class="l">按住 <em>确定</em> 说话</div>
+        </div>
+      </div>
+    </div></div>
+    <div class="cap"><b>主页 · 已完成</b>（绿色成功态）</div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><b>①</b> 状态条：信号格圆角 1.5px，电量图标化（药丸 + 百分比）</span>
+  <span><b>②</b> 徽章：Full 圆角 + 圆点 + 12% 透明度色底</span>
+  <span><b>②b</b> 运行计时：等宽 tabular 数字，右上角与徽章同行（仅运行中显示）</span>
+  <span><b>③</b> 状态大卡：R16，四态共用骨架</span>
+  <span><b>④</b> XL 大字保持 40px（隔一米可读）</span>
+  <span><b>⑤</b> 底栏：两行提示合入一张 R14 卡，中缝发丝线分隔</span>
+  <span><b>⑥</b> 虚线为安全区边界（外壳遮挡 10px，布局不变）</span>
+</div>
+
+<!-- ══════════════════ 覆盖层页面 ══════════════════ -->
+<h2>4 · 覆盖层页面</h2>
+<p class="desc">九个覆盖层里最关键的五个。选中态采用「色底 + 2px 描边 + 左侧圆点」三重视觉冗余——小屏 + 三键操作，选中必须一眼可辨。</p>
+
+<div class="grid">
+  <!-- 审批 -->
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="hdr"><span class="t">审批</span><span class="badge b-err">高风险</span></div>
+        <div class="card" style="top:32px;height:60px;padding:10px 13px;font-size:11px;color:#C8D6E5;line-height:17px">
+          rm -rf node_modules && pnpm install 重装依赖并执行构建脚本
+        </div>
+        <div class="btn btn-allow sel" style="top:108px;color:#7CEBA8"><span class="caret">▸</span>允许一次</div>
+        <div class="btn btn-deny" style="top:162px;color:#FF8A8A">拒绝</div>
+        <div class="foothint">上 / 下选择　·　确定提交</div>
+      </div>
+    </div></div>
+    <div class="cap"><b>审批</b> · 风险徽章 + 药丸按钮</div>
+  </div>
+
+  <!-- 追问 -->
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="hdr"><span class="t">问题 2/3</span><span class="badge b-dim">多选</span></div>
+        <div style="position:absolute;left:0;top:32px;width:220px;font-size:10px;color:#8FA3B8">测试框架选哪个？</div>
+        <div class="row" style="top:62px">vitest</div>
+        <div class="row sel" style="top:96px"><span class="rdot"></span>jest<span class="rec">荐</span></div>
+        <div class="row" style="top:130px">mocha</div>
+        <div class="row" style="top:164px">pytest</div>
+        <div class="row" style="top:198px">自定义答案…</div>
+        <div class="row" style="top:232px;color:#5A6B7D">跳过此题</div>
+        <div class="foothint">上 / 下选择　·　确定确认</div>
+      </div>
+    </div></div>
+    <div class="cap"><b>追问 / 计划评审</b> · 圆角选项行</div>
+  </div>
+
+  <!-- 识别结果 -->
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="hdr"><span class="t">识别结果</span><span class="badge b-info">语音</span></div>
+        <div class="card" style="top:32px;height:172px;padding:12px 13px;overflow:hidden">
+          <div style="font-size:11px;color:#C8D6E5;line-height:19px">
+            帮我把登录模块的错误处理统一成
+            Result 类型，然后补上单元测试，
+            覆盖密码错误的分支和会话过期
+            的分支，跑通之后再提交……
+          </div>
+          <div style="position:absolute;right:5px;top:12px;bottom:12px;width:3px;border-radius:2px;background:#1B2735">
+            <div style="position:absolute;left:0;top:0;width:3px;height:26px;border-radius:2px;background:#3A4A5C"></div>
+          </div>
+        </div>
+        <div class="keyrow" style="top:216px"><span class="keycap">上</span><span class="tx">单击 · 删除 / 返回</span></div>
+        <div class="keyrow" style="top:244px"><span class="keycap">OK</span><span class="tx">单击 · 填入对话</span></div>
+        <div class="keyrow" style="top:272px"><span class="keycap" style="background:#14301F;box-shadow:inset 0 0 0 1px #2E5C41;color:#7CEBA8">OK</span><span class="tx">长按 · 直接发送</span></div>
+      </div>
+    </div></div>
+    <div class="cap"><b>语音识别结果卡</b> · 键帽提示行</div>
+  </div>
+
+  <!-- 语音输入 -->
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="hdr"><span class="t">语音回答</span></div>
+        <div class="micwrap">
+          <div class="micring"></div><div class="micring2"></div>
+          <div class="miccore">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <rect x="9" y="3" width="6" height="11" rx="3" fill="#4DB8FF"/>
+              <path d="M6 11a6 6 0 0 0 12 0" stroke="#4DB8FF" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M12 17v4M9 21h6" stroke="#4DB8FF" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <div style="position:absolute;left:0;top:204px;width:220px;text-align:center;font-size:13px;font-weight:700;color:#4DB8FF">正在聆听…</div>
+        <div style="position:absolute;left:0;top:226px;width:220px;text-align:center;font-size:10px;color:#5A6B7D">松开发送 · 长按放弃</div>
+        <div class="foothint">按住 <b style="color:#8FA3B8">确定</b> 说话</div>
+      </div>
+    </div></div>
+    <div class="cap"><b>语音输入</b> · 圆形声波按钮</div>
+  </div>
+
+  <!-- 余额 -->
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="hdr"><span class="t">余额</span><span class="badge b-acc">CNY</span></div>
+        <div class="card" style="top:32px;height:74px;border-radius:16px;padding:11px 14px">
+          <div style="font-size:9px;color:#5A6B7D;letter-spacing:1px">总额</div>
+          <div style="font-size:24px;font-weight:800;color:#E8EEF5;font-family:Menlo,monospace;margin-top:2px">¥ 12.50</div>
+        </div>
+        <div class="card" style="top:116px;height:148px;overflow:hidden">
+          <div style="height:37px;display:flex;align-items:center;justify-content:space-between;padding:0 13px;font-size:11px">
+            <span style="color:#8FA3B8">充值余额</span><span class="mono" style="color:#C8D6E5">10.00</span></div>
+          <div style="height:37px;display:flex;align-items:center;justify-content:space-between;padding:0 13px;font-size:11px;border-top:1px solid #1B2735">
+            <span style="color:#8FA3B8">赠送余额</span><span class="mono" style="color:#C8D6E5">4.20</span></div>
+          <div style="height:37px;display:flex;align-items:center;justify-content:space-between;padding:0 13px;font-size:11px;border-top:1px solid #1B2735">
+            <span style="color:#8FA3B8">今日消耗</span><span class="mono" style="color:#FFB454">1.70</span></div>
+          <div style="height:37px;display:flex;align-items:center;justify-content:space-between;padding:0 13px;font-size:11px;border-top:1px solid #1B2735">
+            <span style="color:#8FA3B8">更新于</span><span class="mono" style="color:#5A6B7D">14:32</span></div>
+        </div>
+        <div class="foothint">任意键返回</div>
+      </div>
+    </div></div>
+    <div class="cap"><b>余额</b> · 总额大卡 + 分组明细</div>
+  </div>
+
+  <!-- 设置 -->
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="hdr"><span class="t">设置</span></div>
+        <div class="group" style="top:32px;height:168px">
+          <div class="grow"><span class="n">熄屏</span><span class="v">2 分钟 ›</span></div>
+          <div class="grow sel"><span class="n">亮度</span><span class="v">中 ›</span></div>
+          <div class="grow"><span class="n">自动休眠</span><span class="v">1 小时 ›</span></div>
+          <div class="grow"><span class="n">提示音量</span><span class="v">中高 ›</span></div>
+        </div>
+        <div class="card" style="top:210px;height:52px;display:flex;align-items:center;padding:0 13px;gap:9px">
+          <span class="badge b-acc">已配对</span>
+          <span class="mono" style="font-size:10px;color:#8FA3B8">sunlinxiao-macmini</span>
+        </div>
+        <div class="foothint">确定返回</div>
+      </div>
+    </div></div>
+    <div class="cap"><b>系统设置</b> · 内嵌分组列表（iOS 式）</div>
+  </div>
+
+  <!-- 配对码 -->
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="hdr"><span class="t">配对</span><span class="badge b-warn">等待确认</span></div>
+        <div class="card" style="top:88px;height:112px;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">
+          <div style="font-size:9px;color:#5A6B7D;letter-spacing:2px">配对码</div>
+          <div class="mono" style="font-size:28px;font-weight:800;color:#3DDC84;letter-spacing:7px">483291</div>
+        </div>
+        <div style="position:absolute;left:0;top:214px;width:220px;text-align:center">
+          <span class="mono" style="font-size:10px;color:#5A6B7D">ID: AI-PP-7F3A</span>
+        </div>
+        <div class="foothint">请在主机插件面板输入配对码</div>
+      </div>
+    </div></div>
+    <div class="cap"><b>配对码</b> · 大码居中卡</div>
+  </div>
+
+  <!-- Toast -->
+  <div class="cell">
+    <div class="shot"><div class="scr">
+      <div class="safe">
+        <div class="statrow">
+          <div class="sig"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+          <span class="appname">AI 通行证</span>
+          <div class="batt"><div class="shell"><div class="lvl"></div></div><span class="pct mono">87%</span></div>
+        </div>
+        <div class="statecard">
+          <div class="statechip b-acc"><span class="dot"></span>已完成</div>
+          <div class="statetext" style="color:#3DDC84">已完成</div>
+          <div class="statehint">「重构登录模块」已完成</div>
+        </div>
+        <div class="homefoot">
+          <div class="l"><em>上键</em> 设置 · <em>下键</em> 余额</div>
+          <div class="sep"></div>
+          <div class="l">按住 <em>确定</em> 说话</div>
+        </div>
+      </div>
+      <div class="veil"></div>
+      <div class="toast">
+        <div class="ic">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 12.5 10 18 20 6" stroke="#3DDC84" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="tt">任务已完成</div>
+        <div class="ts">详情请回电脑查看</div>
+      </div>
+    </div></div>
+    <div class="cap"><b>Toast 浮层</b> · R16 + 遮罩 + 图标</div>
+  </div>
+</div>
+
+<!-- ══════════════════ LVGL 落地映射 ══════════════════ -->
+<h2>5 · LVGL 落地映射</h2>
+<p class="desc">改版集中在 <code class="mono">app_ui_theme.h</code>（令牌与风格助手）+ 两个界面文件的样式调用，布局栅格骨架基本不动。</p>
+
+<div class="tblwrap">
+<table>
+  <tr><th>设计元素</th><th>LVGL 实现</th><th>现有代码位置</th></tr>
+  <tr>
+    <td><b>圆角卡片 R14/R16</b></td>
+    <td><code class="mono">lv_obj_set_style_radius(obj, 14/16, 0)</code> + 淡描边 <code class="mono">border_width 1 / border_color UI_STROKE</code></td>
+    <td><code class="mono">ui_theme_box()</code> 改造：加 radius 参数，或新增 <code class="mono">ui_theme_card(obj, bg, r)</code></td>
+  </tr>
+  <tr>
+    <td><b>药丸（徽章/按钮）</b></td>
+    <td><code class="mono">lv_obj_set_style_radius(obj, LV_RADIUS_CIRCLE, 0)</code>（高 44/18 自动成胶囊）</td>
+    <td>新增 <code class="mono">ui_theme_pill()</code>；审批页两个选项按钮 <code class="mono">app_screens.c</code></td>
+  </tr>
+  <tr>
+    <td><b>透明度色底</b>（徽章 12% 底、选中行 10% 底）</td>
+    <td>LVGL8 用 <code class="mono">lv_color_mix(fg, bg, opa)</code> 预混出实色常量，避免半透明叠加开销</td>
+    <td>调色板区新增 <code class="mono">UI_ACCENT_BG / UI_WARN_BG / UI_ERR_BG / UI_INFO_BG</code> 四个预混色</td>
+  </tr>
+  <tr>
+    <td><b>选中态三重冗余</b>（色底 + 2px 描边 + 圆点）</td>
+    <td>border_width 2 + <code class="mono">UI_ROW_SEL</code> 换预混绿底 + 5px 圆点小对象</td>
+    <td><code class="mono">UI_ROW_SEL</code> 重新定义；选项行渲染处 <code class="mono">app_screens.c</code></td>
+  </tr>
+  <tr>
+    <td><b>电量图标 / 信号格</b></td>
+    <td>纯色小对象拼装（现状已是色块画法），只加 radius</td>
+    <td><code class="mono">app_ui.c</code> 状态条区</td>
+  </tr>
+  <tr>
+    <td><b>Toast 圆角浮层 + 遮罩</b></td>
+    <td>Toast 容器 R16；遮罩用半透明黑全屏对象（LVGL opa 支持，无性能问题）</td>
+    <td><code class="mono">s_toast</code> 样式区 <code class="mono">app_ui.c</code></td>
+  </tr>
+</table>
+</div>
+
+<div class="note">
+  <b>落地注意（都是这个仓库踩过的坑，别再踩）：</b><br>
+  ① <b>阴影不用。</b>手机质感的核心是圆角 + 分层表面色，不是投影；LVGL box shadow 全屏重绘开销大，三层表面色 + 1px 淡描边已足够精致。<br>
+  ② <b>纵向预算必须同步改。</b><code class="mono">tools/verify-layout.py</code> 与 <code class="mono">tests/test_ui_pixel_math.c</code> 校验的是旧硬边版面的坐标预算（状态条 28 / 底栏 56 等），新版式（状态条 22 / 状态卡 30..212 / 底栏卡 76）要一起更新，否则静态校验直接红。<br>
+  ③ <b>字体管线不动。</b>文案若有新增（如「正在聆听…」「自定义答案…」），跑 <code class="mono">tools/make-fonts.py</code> 重新提取字形子集——缺字就是方框，这是两次真机返工的教训。<br>
+  ④ <b>半透明禁止直接用 opa 属性叠加在滚动内容上</b>（LVGL 会退化成离屏合成），一律预混实色。<br>
+  ⑤ <b>改版验收用截图链路。</b><code class="mono">app_screenshot.c</code> 已具备截图能力，逐页截图与设计稿比对，别盲改。
+</div>
+
+</body>
+</html>

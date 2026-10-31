@@ -212,35 +212,87 @@ LINE_SPACE = macro('UI_TEXT_LINE_SPACE')
 PITCH = macro('UI_TEXT_PITCH_CJK')
 
 SB_Y = macro('UI_STATUSBAR_Y')
-BODY_Y = macro('UI_BODY_Y')
+CARD_Y = macro('UI_STATE_CARD_Y')
+CARD_H = macro('UI_STATE_CARD_H')
 FOOT_Y = macro('UI_FOOTER_Y')
+CARD_PAD = macro('UI_CARD_PAD_X')
+CHIP_PAD = macro('UI_STATE_CHIP_PAD_X')
+CHIP_DOT = macro('UI_STATE_CHIP_DOT')
+CHIP_GAP = macro('UI_STATE_CHIP_GAP')
+CHIP_H = macro('UI_STATE_CHIP_H')
+LINE_H_CJK16 = macro('UI_LINE_H_CJK16')
+F_8 = FONTS['app_ui_font_8']
+F_M = FONTS['app_ui_font_16']
 
 
 def centered_y(container_h: int, line_h: int) -> int:
     return (container_h - line_h) // 2
 
 
+def chip_width(text: str) -> int:
+    """徽章药丸宽度：左右内边距 + 圆点 + 间距 + 文字实宽（与 C 侧 flex 自适应一致）。"""
+    return CHIP_PAD * 2 + CHIP_DOT + CHIP_GAP + int(text_width(text, F_CJK16))
+
+
+# 状态条右端：当前时间 40 + 缝 6 + 电量百分比 42 + 缝 4 + 外壳 20 + 凸起 2
+# 宽度与 x 全部取自 app_ui_theme.h（改了头文件这里自动跟着变）
+BATT_W = macro('UI_BATT_W')
+BATT_X = macro('UI_BATT_X')
+CLOCK_X = macro('UI_CLOCK_X')
+CLOCK_W = macro('UI_CLOCK_W')
+APP_NAME_X = macro('UI_APPNAME_X')
+# 运行计时最宽形态 "10:23:45"（16px 思源）
+TIMER_W = int(text_width('10:23:45', F_CJK16)) + 2
+
 HOME = [
-    El('状态条·应用名', F_CJK, UI_PAD + 16, SB_Y + centered_y(macro('UI_STATUSBAR_H'), LINE_H_CJK),
-       UI_W - (UI_PAD + 16), LINE_H_CJK, 'AI 通行证 · 已连接', 1),
-    El('状态条·应用名2', F_CJK, UI_PAD + 16, SB_Y + centered_y(macro('UI_STATUSBAR_H'), LINE_H_CJK),
-       UI_W - (UI_PAD + 16), LINE_H_CJK, 'AI 通行证 · 待连接', 1),
-    El('状态大字', F_XL, 0, BODY_Y + macro('UI_STATE_TEXT_Y'),
-       UI_W, macro('UI_LINE_H_XL'), '运行中', 1),
-    El('状态提示', F_CJK, UI_PAD, BODY_Y + macro('UI_STATE_HINT_Y'),
-       UI_W - UI_PAD * 2, macro('UI_STATE_HINT_H'), '没有正在执行的任务', macro('UI_STATE_HINT_LINES')),
-    El('状态提示·主机', F_CJK, UI_PAD, BODY_Y + macro('UI_STATE_HINT_Y'),
-       UI_W - UI_PAD * 2, macro('UI_STATE_HINT_H'), '执行质量检查并生成报告', macro('UI_STATE_HINT_LINES'), True),
-    El('底栏·行1', F_CJK, 0, FOOT_Y + macro('UI_FOOTER_LINE1_Y'), UI_W, LINE_H_CJK, '长按下键看余额', 1),
-    El('底栏·行2', F_CJK, 0, FOOT_Y + macro('UI_FOOTER_LINE2_Y'), UI_W, LINE_H_CJK, '长按确定断开', 1),
+    # 状态条四个元素**同一款字体、同一字号**（16px 思源 = F_CJK16），横向靠坐标排开：
+    #   应用名 25..91 / 时间 106..146 / 电量 152..194 / 外壳 198..218(+凸起 2)
+    # 应用名只占到时钟左侧（再往右就是时间），宽度按这个边界算，
+    # 否则"改长应用名"这种事会被判成通过而真机撞上时钟。
+    El('状态条·应用名', F_CJK16, APP_NAME_X, SB_Y + centered_y(macro('UI_STATUSBAR_H'), LINE_H_CJK16),
+       CLOCK_X - 4 - APP_NAME_X, LINE_H_CJK16, 'AI 通行证', 1),
+    El('状态条·时间', F_CJK16, CLOCK_X, SB_Y + centered_y(macro('UI_STATUSBAR_H'), LINE_H_CJK16),
+       CLOCK_W, LINE_H_CJK16, '20:17', 1),
+    El('状态条·电量', F_CJK16, BATT_X, SB_Y + centered_y(macro('UI_STATUSBAR_H'), LINE_H_CJK16),
+       BATT_W, LINE_H_CJK16, '100%', 1),
+    # 徽章药丸：宽随文字（C 侧 LV_SIZE_CONTENT + flex），高度见主题头说明（22 而非 18）
+    El('状态卡·徽章', F_CJK16, CARD_PAD, CARD_Y + macro('UI_STATE_CHIP_Y'),
+       chip_width('待审批'), CHIP_H, '待审批', 1),
+    # 计时贴右上角：**16px 思源**，跨小时不再降字号（见 app_ui.c refresh_timer）。
+    # 最宽形态是 "10:23:45"（8 字符），按它建模；框宽 +2 缓冲。
+    #   旧模型是"16px 点阵 6 字符 / 8px 点阵 8 字符"两份 —— 那是因为等宽点阵
+    #   放不下 H:MM:SS；换比例字体后 8 字符只有 61.5px，一份模型就够。
+    El('状态卡·计时', F_CJK16, UI_W - CARD_PAD - TIMER_W, CARD_Y + macro('UI_STATE_TIMER_Y'),
+       TIMER_W, LINE_H_CJK16, '10:23:45', 1),
+    El('状态大字', F_XL, CARD_PAD, CARD_Y + macro('UI_STATE_TEXT_Y'),
+       macro('UI_STATE_HINT_W'), macro('UI_LINE_H_XL'), '运行中', 1),
+    El('状态提示', F_CJK, CARD_PAD, CARD_Y + macro('UI_STATE_HINT_Y'),
+       macro('UI_STATE_HINT_W'), macro('UI_STATE_HINT_H'),
+       '没有正在执行的任务', macro('UI_STATE_HINT_LINES')),
+    El('状态提示·主机', F_CJK, CARD_PAD, CARD_Y + macro('UI_STATE_HINT_Y'),
+       macro('UI_STATE_HINT_W'), macro('UI_STATE_HINT_H'),
+       '执行质量检查并生成报告', macro('UI_STATE_HINT_LINES'), True),
+    El('底栏卡·行1', F_CJK16, 0, FOOT_Y + macro('UI_FOOTER_LINE1_Y'),
+       UI_W, LINE_H_CJK16, '长按上键设置 下键看余额', 1),
+    El('底栏卡·发丝线', F_CJK, (UI_W - macro('UI_FOOTER_SEP_W')) // 2,
+       FOOT_Y + macro('UI_FOOTER_SEP_Y'), macro('UI_FOOTER_SEP_W'), 1, '', 0),
+    El('底栏卡·行2', F_CJK16, 0, FOOT_Y + macro('UI_FOOTER_LINE2_Y'),
+       UI_W, LINE_H_CJK16, '按住确定说话', 1),
 ]
 
 HOME_WAITING = [
-    El('底栏·等待授权', F_CJK, 0, FOOT_Y + centered_y(macro('UI_FOOTER_H'), LINE_H_CJK),
-       UI_W, LINE_H_CJK, '等待授权请求', 1),
+    El('底栏卡·等待授权', F_CJK16, 0, FOOT_Y + centered_y(macro('UI_FOOTER_H'), LINE_H_CJK16),
+       UI_W, LINE_H_CJK16, '等待授权请求', 1),
 ]
 
 APPROVAL_FOOT_Y = UI_H - macro('OV_FOOT_H')
+
+# 列表行内文字：v2.0 起行卡左侧有 6px 选中圆点（12..18），文字右移到 x=24，
+# 右侧再留 8px。与 app_screens.c 的 ROW_TEXT_X / row_dot() 保持一一对应 ——
+# 三处（追问/审批/设置）共用同一套行卡几何，改一处就要三处一起对。
+ROW_TEXT_X = UI_PAD + 24
+ROW_TEXT_W = UI_W - UI_PAD * 2 - 24 - 8
+
 # 审批页 2026-10-06 二改后只剩：标题 + 一行摘要 + 两个选项 + 底栏
 # （倒计时条/倒计时文字/原因多行区已删除，见 app_ui_theme.h 审批页规格注释）。
 APPROVAL = [
@@ -248,11 +300,11 @@ APPROVAL = [
        UI_W - UI_PAD * 2, LINE_H_CJK, '等待审批', 1),
     El('审批·摘要', F_CJK, UI_PAD, macro('OV_APPR_TOOL_Y'),
        UI_W - UI_PAD * 2, LINE_H_CJK, '写入仓库目录', 1, True),
-    El('审批·选项1', F_CJK, UI_PAD, macro('OV_APPR_OPTS_Y'),
-       UI_W - UI_PAD * 2, macro('OV_APPR_OPT_H'), '运行一次', 1),
-    El('审批·选项2', F_CJK, UI_PAD,
+    El('审批·选项1', F_CJK, ROW_TEXT_X, macro('OV_APPR_OPTS_Y'),
+       ROW_TEXT_W, macro('OV_APPR_OPT_H'), '运行一次', 1),
+    El('审批·选项2', F_CJK, ROW_TEXT_X,
        macro('OV_APPR_OPTS_Y') + macro('OV_APPR_OPT_H') + macro('OV_APPR_OPT_GAP'),
-       UI_W - UI_PAD * 2, macro('OV_APPR_OPT_H'), '拒绝', 1),
+       ROW_TEXT_W, macro('OV_APPR_OPT_H'), '拒绝', 1),
     El('审批·底栏·选择', F_CJK16, UI_PAD, APPROVAL_FOOT_Y,
        UI_W - UI_PAD * 2, macro('OV_FOOT_H'), '上/下选择  确定执行', 1),
     El('审批·底栏·失败', F_CJK16, UI_PAD, APPROVAL_FOOT_Y,
@@ -271,8 +323,9 @@ BALANCE = [
 ]
 
 TOAST = [
-    El('提示条·文本', F_CJK, UI_PAD + 10, BODY_Y + 16 + macro('UI_TOAST_TEXT_Y'),
-       UI_W - UI_PAD * 2 - 20, macro('UI_TOAST_TEXT_H'), '已提交，等待主机确认', macro('UI_TOAST_TEXT_LINES'), True),
+    El('提示条·文本', F_CJK, CARD_PAD + 12, CARD_Y + 20 + macro('UI_TOAST_TEXT_Y'),
+       UI_W - CARD_PAD * 2 - 24, macro('UI_TOAST_TEXT_H'),
+       '已提交，等待主机确认', macro('UI_TOAST_TEXT_LINES'), True),
 ]
 
 # 系统设置页：4 个档位行 + 配对行（两行：状态 + 主机名）+ 底栏提示。
@@ -280,8 +333,8 @@ TOAST = [
 SET_ROWS_Y = macro('OV_SET_ROWS_Y')
 SET_ROW_PITCH = macro('OV_Q_ROW_H') + macro('OV_Q_ROW_GAP')
 SET_PAIR_Y = SET_ROWS_Y + 4 * SET_ROW_PITCH
-SET_TEXT_X = UI_PAD + 12
-SET_TEXT_W = UI_W - UI_PAD * 2 - 20
+SET_TEXT_X = ROW_TEXT_X          # 圆点 6px + 间隙，与 app_screens.c 的 row_dot() 对齐
+SET_TEXT_W = ROW_TEXT_W
 SETTINGS = [
     El('设置·标题', F_CJK, UI_PAD, centered_y(macro('OV_TITLE_H'), LINE_H_CJK),
        UI_W - UI_PAD * 2, LINE_H_CJK, '系统设置', 1),
@@ -361,11 +414,13 @@ def main() -> int:
     print(f'屏幕安全区 {UI_W}×{UI_H}（常量直接解析自 app_ui_theme.h）')
     print(f'字体行高：CJK {F_CJK.line_h}px / XL {F_XL.line_h}px，多行行距 {LINE_SPACE}px')
 
-    print('\n═══ 纵向预算（主页）═══')
+    print('\n═══ 纵向预算（主页 · v2.0 圆角卡片版）═══')
     for label, y, h in (
         ('状态条', macro('UI_STATUSBAR_Y'), macro('UI_STATUSBAR_H')),
-        ('状态主体', macro('UI_BODY_Y'), macro('UI_BODY_H')),
-        ('底栏', macro('UI_FOOTER_Y'), macro('UI_FOOTER_H')),
+        ('缝', macro('UI_STATUSBAR_H'), macro('UI_CARD_GAP')),
+        ('状态卡', CARD_Y, CARD_H),
+        ('缝', CARD_Y + CARD_H, FOOT_Y - (CARD_Y + CARD_H)),
+        ('底栏卡', FOOT_Y, macro('UI_FOOTER_H')),
     ):
         print(f'  {label:<6} y={y:>3} .. {y + h:>3}  高 {h:>3}px')
 

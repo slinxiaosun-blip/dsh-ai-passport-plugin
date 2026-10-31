@@ -181,7 +181,25 @@ export const MSG = Object.freeze({
   NACK: 'nack', // {msgId, reason}
 
   // —— 任务域 ——
-  TASK_STATE: 'task.state',      // 主机聚合后的整体状态（精简版核心消息）
+  /**
+   * 主机聚合后的整体状态（精简版核心消息）。
+   *
+   * 载荷：`{ state, title, elapsedMs?, sinceReliable? }`
+   *
+   * 计时两个字段是 **v2.0 新增的可选字段**，因此 PROTOCOL_VERSION 保持 1：
+   *   - `elapsedMs`：该轮忙碌已运行的毫秒数（主机在发送时刻算好），
+   *     设备用它做种子、再用单调时钟本地走秒；**不是**开始时间戳
+   *     （设备没有 RTC，时间戳对不上）。
+   *   - `sinceReliable`：起点是否来自真实的 `turn/start`。目前**总是 true** ——
+   *     起点不可靠时主机干脆不下发 `elapsedMs`，因为设备端按设计稿只印
+   *     纯 `MM:SS` / `H:MM:SS`，没有位置标注「这是近似值」，而一个精确到秒
+   *     却系统性偏小的数字比不显示更容易误导。字段保留是为了让链路日志
+   *     与其它客户端仍能看出端倪。
+   *
+   * 缺省行为：字段缺失 → 设备不显示计时。这样「新固件 + 旧插件」
+   * 与「旧固件 + 新插件」都能继续工作，只是没有计时。
+   */
+  TASK_STATE: 'task.state',
 
   // —— 审批域 ——
   APPROVE_REQ: 'approve.req', // Mac → 设备

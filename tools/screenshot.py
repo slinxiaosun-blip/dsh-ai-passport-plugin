@@ -35,11 +35,6 @@ import time
 CMD = b"FAP_SCREENSHOT_V1\n"
 HEADER_RE = re.compile(rb"FAP_SCREENSHOT_V1\s+(\d+)\s+(\d+)\s+RGB565LE\s+(\d+)")
 
-try:
-    from PIL import Image
-except ImportError:
-    sys.exit("需要 Pillow：python3 -m pip install Pillow")
-
 
 def find_port() -> str:
     for pattern in ("/dev/cu.usbmodem*", "/dev/cu.wchusbserial*", "/dev/cu.usbserial*"):
@@ -107,21 +102,51 @@ def read_exact(fd: int, count: int, timeout_s: float = 25.0) -> bytes:
     return bytes(buf)
 
 
-def decode_rgb565(data: bytes, width: int, height: int, swap: bool) -> "Image.Image":
-    img = Image.new("RGB", (width, height))
-    px = img.load()
-    i = 0
+def decode_rgb565(data: bytes, width: int, height: int, swap: bool) -> bytes:
+    """RGB565 → 紧凑 RGB888 字节流（每像素 3 字节）。"""
+    out = bytearray(width * height * 3)
+    o = 0
+    for i in range(0, width * height * 2, 2):
+        lo, hi = data[i], data[i + 1]
+        if swap:
+            lo, hi = hi, lo
+        v = (hi << 8) | lo
+        r, g, b = (v >> 11) & 0x1F, (v >> 5) & 0x3F, v & 0x1F
+        # 5/6/5 → 8 位：位复制把小值域拉伸到满量程（比简单左移更准）
+        out[o] = (r << 3) | (r >> 2)
+        out[o + 1] = (g << 2) | (g >> 4)
+        out[o + 2] = (b << 3) | (b >> 2)
+        o += 3
+    return bytes(out)
+
+
+def save_png(path: str, width: int, height: int, rgb: bytes) -> None:
+    """零依赖 PNG 编码（灰度/真彩都走 filter 0 + zlib）。
+
+    原本用 PIL，但沙箱里 pip 装不上（没有外网），截图是调试刚需，
+    所以把编码器内置进来，`python3 tools/screenshot.py` 直接可用。
+    """
+    import struct
+    import zlib
+
+    raw = bytearray()
+    stride = width * 3
     for y in range(height):
-        for x in range(width):
-            lo, hi = data[i], data[i + 1]
-            i += 2
-            if swap:
-                lo, hi = hi, lo
-            v = (hi << 8) | lo
-            r, g, b = (v >> 11) & 0x1F, (v >> 5) & 0x3F, v & 0x1F
-            # 5/6/5 → 8 位：位复制把小值域拉伸到满量程（比简单左移更准）
-            px[x, y] = ((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2))
-    return img
+        raw.append(0)
+        raw += rgb[y * stride:(y + 1) * stride]
+
+    def chunk(tag: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + tag + payload +
+                struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + chunk(b"IEND", b"")
+    )
+    with open(path, "wb") as f:
+        f.write(png)
 
 
 def main() -> int:
@@ -172,10 +197,10 @@ def main() -> int:
     if args.both:
         for swap, suffix in ((False, "-le"), (True, "-swapped")):
             out = args.output.replace(".png", f"{suffix}.png")
-            decode_rgb565(data, width, height, swap).save(out)
+            save_png(out, width, height, decode_rgb565(data, width, height, swap))
             print(f"已保存: {out}")
     else:
-        decode_rgb565(data, width, height, False).save(args.output)
+        save_png(args.output, width, height, decode_rgb565(data, width, height, False))
         print(f"已保存: {args.output}（颜色异常时用 --both 对比字节序）")
     return 0
 

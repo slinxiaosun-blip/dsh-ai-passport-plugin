@@ -119,14 +119,14 @@ http://127.0.0.1:19387/dsh-passport
 
 ## 版本与兼容性
 
-当前实测环境（2026-10-07）：
+当前实测环境（2026-10-31）：
 
 | 组件 | 版本 | 说明 |
 | --- | --- | --- |
 | DSH 桌面版 | `0.2.0-rc.2` | 插件 API 基线，开发时以它为准；macOS 与 Windows 同一份插件代码 |
 | dsh CLI | `0.1.7-rc.2` | `dsh --version` 实测 |
-| 插件（本仓） | `1.2.0` | `packages/dsh-ai-passport/package.json` |
-| 设备固件 | `1.2.1` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
+| 插件（本仓） | `1.3.0` | `packages/dsh-ai-passport/package.json` |
+| 设备固件 | `1.3.0` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
 | BLE 协议 | `v1` | 双端常量 `PROTOCOL_VERSION` ↔ `AP_PROTOCOL_VERSION`，取较小值运行 |
 | 固件基线 | `main @ 0b9e4c8` | 上游 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport) |
 | Node | ≥ 20 | 开发机 22.22.2；DSH 桌面版内置 Node 24.21.0 |
@@ -134,6 +134,9 @@ http://127.0.0.1:19387/dsh-passport
 
 版本记录：
 
+- `1.3.0` —— **状态条字号统一**：应用名/时间/电量原先 16px 与 8px 混排，用户反馈「大小不统一、
+  没对齐」，现四者同为 16px 思源黑体、同一条基线（时间与电量改用比例字体后仍放得下完整文案）。
+  同时状态卡里的运行计时**跑过 1 小时不再降成 8px**。固件 `1.3.0` 同步，协议 v1 不变。
 - `1.2.0` —— **修复长录音静默失败**：任何超过 10 秒的录音都会在设备自动停止后
   "什么也不出"且无任何报错（主机侧会话存活期窗口写死 10s，短于录音上限）；
   现改为由录音上限派生。同时让 `voice.maxSeconds` 真正生效（此前是死配置），

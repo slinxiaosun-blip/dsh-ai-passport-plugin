@@ -413,11 +413,19 @@ export class BridgeProcessTransport extends Transport {
   }
 }
 
-/** 带 unref 的等待：不阻止进程退出（测试运行器尤其在意这一点）。 */
+/**
+ * 短等待（只用于「给桥进程一点时间收尾」这类 50~60ms 的场景）。
+ *
+ * ★ 这里**绝对不能 unref**。踩过的坑：await 一个 unref 过的定时器，
+ *   当事件循环里没有其它待办时它会立刻"空转"——Promise 永远不 settle，
+ *   表现为 dispose() / disconnect() 再也不返回。在 node --test 下报的是
+ *   "Promise resolution is still pending but the event loop has already
+ *   resolved"，于是 bridge-process 的 11 条用例全部变成 cancelled（不是 fail，
+ *   更不容易被发现）。50ms 的定时器不可能拖住进程退出，ref 着才是对的。
+ */
 function sleep(ms) {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms)
-    timer.unref?.()
+    setTimeout(resolve, ms)
   })
 }
 
