@@ -123,13 +123,14 @@ http://127.0.0.1:19387/dsh-passport
 
 | 组件 | 版本 | 说明 |
 | --- | --- | --- |
-| DSH 桌面版 | `0.2.0-rc.2` | 插件 API 基线，开发时以它为准；macOS 与 Windows 同一份插件代码 |
-| dsh CLI | `0.1.7-rc.2` | `dsh --version` 实测 |
+| DSH 桌面版 | `0.2.1-rc.5` | 插件 API 基线，开发时以它为准；macOS 与 Windows 同一份插件代码 |
+| dsh CLI | `0.2.0-rc.2` | `dsh --version` 实测；`@deepseek-ai/dsh` 全局安装 |
+| dsh-tui | launcher `0.14.0` / profile `0.17.0` | `dsh-tui --version` 实测，profile 目录 `~/.dsh/profiles/dsh-tui` |
 | 插件（本仓） | `1.3.1` | `packages/dsh-ai-passport/package.json` |
 | 设备固件 | `1.3.1` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
 | BLE 协议 | `v1` | 双端常量 `PROTOCOL_VERSION` ↔ `AP_PROTOCOL_VERSION`，取较小值运行 |
 | 固件基线 | `main @ 0b9e4c8` | 上游 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport) |
-| Node | ≥ 20 | 开发机 22.22.2；DSH 桌面版内置 Node 24.21.0 |
+| Node | ≥ 20 | 开发机 `v22.22.2`；桌面版自带 Node（`Contents/Resources/runtime/bin/node`，版本随 App 走） |
 | 操作系统 | macOS（Apple Silicon）/ Windows 10 1703+ | BLE 后端：CoreBluetooth / WinRT（noble）；固件一次烧录两端通用 |
 
 版本记录：
