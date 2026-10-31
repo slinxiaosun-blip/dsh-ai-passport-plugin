@@ -154,12 +154,12 @@ http://127.0.0.1:19387/dsh-passport
 - `1.0.0` —— 阶段 A/B/C 全功能首个版本（任务台/审批/余额/语音/配对）。
 
 > 设备固件见 [ai-passport-dsh releases](https://github.com/slinxiaosun-blip/ai-passport-dsh/releases)：
-> `1.2.1`（录音上限 15s → 30s，取消静音 1.2s 自动结束，说话中途的停顿不再被切断）。
+> `1.3.1`（状态卡改为信息居中、运行计时放大到 28px；含 1.3.0 的状态条四元素统一 16px 思源）。
 > 协议 v1 未变，固件与插件可独立升级。
 
-> 插件依赖 DSH `0.2.0-rc.x` 的 `ctx.webServer` / `speechToText` / `deepseekAccount`
-> 等宿主 API。DSH 升级前先跑 `npm test`（mock 联调）+ [docs/07](docs/07-设备端验收用例.md)
-> 真机验收，通过再升级。
+> 插件依赖 DSH `0.2.x` 的 `ctx.webServer` / `speechToText` / `deepseekAccount`
+> 等宿主 API（实测基线 `0.2.1-rc.5`）。DSH 升级前先跑 `npm test`（mock 联调）+
+> [docs/07](docs/07-设备端验收用例.md) 真机验收，通过再升级。
 
 ## 目录结构
 
