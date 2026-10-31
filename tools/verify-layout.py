@@ -125,7 +125,7 @@ def load_fonts() -> dict[str, Font]:
     fonts: dict[str, Font] = {}
     by_file = {}
     for fn in ('bitfont_8.c', 'bitfont_16.c', 'app_ui_font_cjk.c', 'app_ui_font_cjk16.c',
-               'app_ui_font_xl.c'):
+               'app_ui_font_xl.c', 'app_ui_font_timer.c'):
         f = Font(os.path.join(FONTS_DIR, fn))
         by_file[fn] = f
     # 符号名：与 app_ui_theme.h 的 UI_FONT_* 指向一致
@@ -135,6 +135,7 @@ def load_fonts() -> dict[str, Font]:
         'app_ui_font_cjk.c': 'app_ui_font_cjk',
         'app_ui_font_cjk16.c': 'app_ui_font_cjk16',
         'app_ui_font_xl.c': 'app_ui_font_xl',
+        'app_ui_font_timer.c': 'app_ui_font_timer',
     }
     for fn, f in by_file.items():
         fonts[name_of[fn]] = f
@@ -149,6 +150,8 @@ F_CJK = FONTS['app_ui_font_cjk']
 F_XL = FONTS['app_ui_font_xl']
 # 覆盖层底栏提示在固件里用 16px 中文（make_overlay 的 hint，UI_FONT_CJK16）
 F_CJK16 = FONTS['app_ui_font_cjk16']
+# 运行计时专用 28px（只有数字 + 冒号）
+F_TIMER = FONTS['app_ui_font_timer']
 
 
 def text_width(s: str, font: Font, strict: bool = True) -> float:
@@ -222,7 +225,10 @@ CARD_PAD = macro('UI_CARD_PAD_X')
 CHIP_DOT = macro('UI_STATE_CHIP_DOT')
 CHIP_H = macro('UI_STATE_CHIP_H')
 CHIP_W = CHIP_H
+CHIP_GAP = macro('UI_STATE_CHIP_GAP')
 LINE_H_CJK16 = macro('UI_LINE_H_CJK16')
+LINE_H_XL = macro('UI_LINE_H_XL')
+LINE_H_TIMER = macro('UI_LINE_H_TIMER')
 F_8 = FONTS['app_ui_font_8']
 F_M = FONTS['app_ui_font_16']
 
@@ -238,8 +244,14 @@ BATT_X = macro('UI_BATT_X')
 CLOCK_X = macro('UI_CLOCK_X')
 CLOCK_W = macro('UI_CLOCK_W')
 APP_NAME_X = macro('UI_APPNAME_X')
-# 运行计时最宽形态 "10:23:45"（16px 思源）
-TIMER_W = int(text_width('10:23:45', F_CJK16)) + 2
+# 运行计时最宽形态 "10:23:45"（28px 计时字体，实宽取真实 adv_w）
+TIMER_W = int(text_width('10:23:45', F_TIMER)) + 2
+# 状态卡信息行：灯 + 大字**整组水平居中**（app_ui.c 用 flex 居中）。
+# 模型取**最宽**的状态词「运行中」来算整组宽度 —— 这是唯一会撑满卡片的情况，
+# 它不越界就说明四种状态都放得下。
+ROW_TEXT_W = int(text_width('运行中', F_XL)) + 2
+ROW_W = CHIP_W + CHIP_GAP + ROW_TEXT_W
+ROW_X = (UI_W - ROW_W) // 2
 
 HOME = [
     # 状态条四个元素**同一款字体、同一字号**（16px 思源 = F_CJK16），横向靠坐标排开：
@@ -252,17 +264,17 @@ HOME = [
        CLOCK_W, LINE_H_CJK16, '20:17', 1),
     El('状态条·电量', F_CJK16, BATT_X, SB_Y + centered_y(macro('UI_STATUSBAR_H'), LINE_H_CJK16),
        BATT_W, LINE_H_CJK16, '100%', 1),
-    # 状态灯：22×22 圆，无文字。状态词只在大字出现一次（见 app_ui.c refresh_state）
-    El('状态卡·状态灯', F_CJK16, CARD_PAD, CARD_Y + macro('UI_STATE_CHIP_Y'),
+    # 信息行：灯 + 大字，**整组水平居中**（见 app_ui_theme.h 状态卡一节）。
+    # 状态灯 22×22 圆、里面没有文字；状态词只在大字出现一次。
+    El('状态卡·状态灯', F_CJK16,
+       ROW_X, CARD_Y + macro('UI_STATE_ROW_Y') + macro('UI_STATE_CHIP_INSET'),
        CHIP_W, CHIP_H, '', 0),
-    # 计时贴右上角：**16px 思源**，跨小时不再降字号（见 app_ui.c refresh_timer）。
-    # 最宽形态是 "10:23:45"（8 字符），按它建模；框宽 +2 缓冲。
-    #   旧模型是"16px 点阵 6 字符 / 8px 点阵 8 字符"两份 —— 那是因为等宽点阵
-    #   放不下 H:MM:SS；换比例字体后 8 字符只有 61.5px，一份模型就够。
-    El('状态卡·计时', F_CJK16, UI_W - CARD_PAD - TIMER_W, CARD_Y + macro('UI_STATE_TIMER_Y'),
-       TIMER_W, LINE_H_CJK16, '10:23:45', 1),
-    El('状态大字', F_XL, CARD_PAD, CARD_Y + macro('UI_STATE_TEXT_Y'),
-       macro('UI_STATE_HINT_W'), macro('UI_LINE_H_XL'), '运行中', 1),
+    # 计时贴右上角：**28px 计时字体**（只有数字与冒号），跨小时不降字号。
+    # 最宽形态 "10:23:45" 实宽 107.4px；框宽 +2 缓冲。
+    El('状态卡·计时', F_TIMER, UI_W - CARD_PAD - TIMER_W, CARD_Y + macro('UI_STATE_TIMER_Y'),
+       TIMER_W, LINE_H_TIMER, '10:23:45', 1),
+    El('状态大字', F_XL, ROW_X + CHIP_W + CHIP_GAP, CARD_Y + macro('UI_STATE_ROW_Y'),
+       ROW_TEXT_W, LINE_H_XL, '运行中', 1),
     # 提示行：现在专职显示主机下发的任务标题，没有标题就空着
     # （以前这里还会复述一遍状态，例如"没有正在执行的任务"，属重复）
     El('状态提示', F_CJK, CARD_PAD, CARD_Y + macro('UI_STATE_HINT_Y'),
@@ -410,7 +422,8 @@ def check_screen(name: str, elements: list[El]) -> bool:
 
 def main() -> int:
     print(f'屏幕安全区 {UI_W}×{UI_H}（常量直接解析自 app_ui_theme.h）')
-    print(f'字体行高：CJK {F_CJK.line_h}px / XL {F_XL.line_h}px，多行行距 {LINE_SPACE}px')
+    print(f'字体行高：CJK {F_CJK.line_h}px / XL {F_XL.line_h}px / 计时 {F_TIMER.line_h}px，'
+          f'多行行距 {LINE_SPACE}px')
 
     print('\n═══ 纵向预算（主页 · v2.0 圆角卡片版）═══')
     for label, y, h in (

@@ -58,6 +58,10 @@ CJK_C = os.path.join(OUT_DIR, 'app_ui_font_cjk.c')
 CJK16_C = os.path.join(OUT_DIR, 'app_ui_font_cjk16.c')
 CJK8_C = os.path.join(OUT_DIR, 'app_ui_font_cjk_8.c')
 XL_C = os.path.join(OUT_DIR, 'app_ui_font_xl.c')
+# 运行计时专用：只有 10 个数字 + 冒号。单独一档而不是复用中文 16px，
+# 是因为"任务跑了多久"要在桌角一眼读到，16px 明显偏小（用户反馈）。
+# 字符集固定 11 个字 → 产物约 3KB，比往中文档里加大字号便宜得多。
+TIMER_C = os.path.join(OUT_DIR, 'app_ui_font_timer.c')
 
 BIT8_NAME = 'app_ui_font_8'
 BIT16_NAME = 'app_ui_font_16'
@@ -65,6 +69,7 @@ CJK_NAME = 'app_ui_font_cjk'
 CJK16_NAME = 'app_ui_font_cjk16'
 CJK8_NAME = 'app_ui_font_cjk_8'
 XL_NAME = 'app_ui_font_xl'
+TIMER_NAME = 'app_ui_font_timer'
 
 # 渲染文本的 API。★ 新增渲染路径时必须把函数名加到这里，
 # 否则新文案的字不会被收进子集 —— 结果就是又出现方框。
@@ -98,6 +103,16 @@ TEXT_CALLS = (
 #   改状态文案时**必须同步这里**，否则新字在 40px 档缺失 ——
 #   表现为状态大字变成方块，而其它文案正常（很难联想到是这里的问题）。
 XL_STRINGS = ('空闲', '运行中', '待审批', '已完成')
+
+# ── 运行计时专用字符集 ────────────────────────────────────────────────────
+#
+# 计时档（28px）只渲染 format_elapsed() 的输出：`M:SS` 或 `H:MM:SS`。
+# 因此只要 10 个数字 + 冒号。★ 不要图省事把 ASCII 全集丢进来 ——
+# 28px/2bpp 每个字形约 0.3KB，翻十倍也只为省一行代码，没有意义。
+#
+# ★ 与 app_ui.c 的 format_elapsed() 必须一致：那里若新增了分隔符（比如 `-`），
+#   这里不加就会出现方块 —— 而且只在计时行出现，很难联想到字体档位。
+TIMER_CHARS = set('0123456789:')
 
 SCREEN_STRINGS = (
     # ── 精简版主界面：只有四个状态词 + 链路状态 ──
@@ -462,7 +477,8 @@ def main() -> int:
                 print(f'✓ {os.path.basename(path)} 覆盖全部 {len(want)} 个字符')
         if ok:
             for path, label in ((BIT8_C, 'bitfont_8'), (BIT16_C, 'bitfont_16'),
-                            (CJK_C, '中文字体20'), (CJK16_C, '中文提示16'), (XL_C, '状态大字40')):
+                            (CJK_C, '中文字体20'), (CJK16_C, '中文提示16'),
+                            (XL_C, '状态大字40'), (TIMER_C, '运行计时28')):
                 if not check_glyphs_fit(path, label):
                     ok = False
         # 状态大字必须覆盖 state_style() 里的四个状态词
@@ -474,6 +490,16 @@ def main() -> int:
             ok = False
         else:
             print(f'✓ 状态大字（40px）覆盖 {len(XL_STRINGS)} 个状态词')
+
+        # 运行计时必须覆盖 format_elapsed() 会吐出的全部字符
+        timer_cov = font_coverage(TIMER_C)
+        timer_missing = sorted(c for c in visible(TIMER_CHARS) if c not in timer_cov)
+        if timer_missing:
+            print(f'✗ 运行计时（28px）缺字：{"".join(timer_missing)}')
+            print('  多半是改了 app_ui.c 的 format_elapsed() 却没同步 TIMER_CHARS')
+            ok = False
+        else:
+            print(f'✓ 运行计时（28px）覆盖 {len(TIMER_CHARS)} 个字符')
 
         # 交叉验证：用硬编码清单核对，独立于提取逻辑
         cjk_cov = font_coverage(CJK_C)
@@ -565,6 +591,17 @@ def main() -> int:
                     '--lv-include', 'lvgl.h', '-o', XL_C])
     rename_symbol(XL_C, XL_NAME)
 
+    # ★ 运行计时 28px：只含数字与冒号。
+    #   16px 思源（状态条那一档）放在桌角要凑近才读得到；计时是"要不要现在
+    #   走过去处理"的判断依据，应当比正文更大一档。28px 的 "10:23:45" 实宽
+    #   107.4px，卡片右侧 192px 的可用宽度放得下，不需要为跨小时再降字号。
+    print('生成运行计时字体（28px, 2bpp）…')
+    timer_syms = build_symbol_string(TIMER_CHARS)
+    run_conv(conv, ['--bpp', '2', '--size', '28', '--font', CJK_FONT,
+                    '--symbols', timer_syms, '--format', 'lvgl', '--no-compress',
+                    '--lv-include', 'lvgl.h', '-o', TIMER_C])
+    rename_symbol(TIMER_C, TIMER_NAME)
+
     print('生成点阵 ASCII 字体（8px / 16px）…')
     run_conv(conv, ['--bpp', '1', '--size', '16', '--font', BIT_FONT, '-r', '0x20-0x7E',
                     '--format', 'lvgl', '--no-compress', '--lv-include', 'lvgl.h', '-o', BIT16_C])
@@ -592,14 +629,16 @@ def main() -> int:
     # ── 自校验：读产物、核对字形覆盖 ──
     ok = True
     for path, label in ((BIT8_C, 'bitfont_8'), (BIT16_C, 'bitfont_16'),
-                            (CJK_C, '中文字体20'), (CJK16_C, '中文提示16'), (XL_C, '状态大字40')):
+                            (CJK_C, '中文字体20'), (CJK16_C, '中文提示16'),
+                            (XL_C, '状态大字40'), (TIMER_C, '运行计时28')):
         if not check_glyphs_fit(path, label):
             ok = False
 
     for path, want, label in ((BIT8_C, ascii_chars, 'bitfont_8'), (BIT16_C, ascii_chars, 'bitfont_16'),
                               (CJK_C, cjk_chars | ascii_chars, '中文字体20'),
                               (CJK16_C, cjk_chars | ascii_chars, '中文提示16'),
-                              (XL_C, {c for t in XL_STRINGS for c in t}, '状态大字40')):
+                              (XL_C, {c for t in XL_STRINGS for c in t}, '状态大字40'),
+                              (TIMER_C, TIMER_CHARS, '运行计时28')):
         covered = font_coverage(path)
         missing = sorted(c for c in visible(want) if c not in covered)
         size = os.path.getsize(path)

@@ -125,8 +125,8 @@ http://127.0.0.1:19387/dsh-passport
 | --- | --- | --- |
 | DSH 桌面版 | `0.2.0-rc.2` | 插件 API 基线，开发时以它为准；macOS 与 Windows 同一份插件代码 |
 | dsh CLI | `0.1.7-rc.2` | `dsh --version` 实测 |
-| 插件（本仓） | `1.3.0` | `packages/dsh-ai-passport/package.json` |
-| 设备固件 | `1.3.0` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
+| 插件（本仓） | `1.3.1` | `packages/dsh-ai-passport/package.json` |
+| 设备固件 | `1.3.1` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
 | BLE 协议 | `v1` | 双端常量 `PROTOCOL_VERSION` ↔ `AP_PROTOCOL_VERSION`，取较小值运行 |
 | 固件基线 | `main @ 0b9e4c8` | 上游 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport) |
 | Node | ≥ 20 | 开发机 22.22.2；DSH 桌面版内置 Node 24.21.0 |
@@ -134,6 +134,12 @@ http://127.0.0.1:19387/dsh-passport
 
 版本记录：
 
+- `1.3.1` —— **状态卡重排 + 计时放大**：按用户要求"信息居中"，状态灯与 40px 状态大字改为
+  一个横排容器整组水平居中（大字宽度随状态词变，灯跟着一起挪），提示行同一条中线居中；
+  运行计时另起一档 **28px** 数字字体（只含 `0-9` 与 `:`），从 16px 放大到 28px 后
+  跨小时的 `10:23:45` 实宽 107px，仍然一份字号走到底。纵向坐标由"块高 98 在计时下沿
+  居中"算出，不再三处硬编码。顺带修掉销毁时漏清 `s_timer_text` / `s_clock_text`
+  两个指针（会让 `if (!ptr) return` 的判空失效）。固件 `1.3.1` 同步，协议 v1 不变。
 - `1.3.0` —— **状态条字号统一**：应用名/时间/电量原先 16px 与 8px 混排，用户反馈「大小不统一、
   没对齐」，现四者同为 16px 思源黑体、同一条基线（时间与电量改用比例字体后仍放得下完整文案）。
   同时状态卡里的运行计时**跑过 1 小时不再降成 8px**。固件 `1.3.0` 同步，协议 v1 不变。
