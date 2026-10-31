@@ -216,10 +216,12 @@ CARD_Y = macro('UI_STATE_CARD_Y')
 CARD_H = macro('UI_STATE_CARD_H')
 FOOT_Y = macro('UI_FOOTER_Y')
 CARD_PAD = macro('UI_CARD_PAD_X')
-CHIP_PAD = macro('UI_STATE_CHIP_PAD_X')
+# 状态灯：22×22 正圆，里面只有 5px 实色芯，**没有文字**。
+# 10-31 之前这里是个"圆点 + 状态词"的药丸，和大字取同一个字符串，
+# 于是屏幕上每个状态词都出现两次（用户反馈"状态显示有重复的"）。
 CHIP_DOT = macro('UI_STATE_CHIP_DOT')
-CHIP_GAP = macro('UI_STATE_CHIP_GAP')
 CHIP_H = macro('UI_STATE_CHIP_H')
+CHIP_W = CHIP_H
 LINE_H_CJK16 = macro('UI_LINE_H_CJK16')
 F_8 = FONTS['app_ui_font_8']
 F_M = FONTS['app_ui_font_16']
@@ -227,11 +229,6 @@ F_M = FONTS['app_ui_font_16']
 
 def centered_y(container_h: int, line_h: int) -> int:
     return (container_h - line_h) // 2
-
-
-def chip_width(text: str) -> int:
-    """徽章药丸宽度：左右内边距 + 圆点 + 间距 + 文字实宽（与 C 侧 flex 自适应一致）。"""
-    return CHIP_PAD * 2 + CHIP_DOT + CHIP_GAP + int(text_width(text, F_CJK16))
 
 
 # 状态条右端：当前时间 40 + 缝 6 + 电量百分比 42 + 缝 4 + 外壳 20 + 凸起 2
@@ -255,9 +252,9 @@ HOME = [
        CLOCK_W, LINE_H_CJK16, '20:17', 1),
     El('状态条·电量', F_CJK16, BATT_X, SB_Y + centered_y(macro('UI_STATUSBAR_H'), LINE_H_CJK16),
        BATT_W, LINE_H_CJK16, '100%', 1),
-    # 徽章药丸：宽随文字（C 侧 LV_SIZE_CONTENT + flex），高度见主题头说明（22 而非 18）
-    El('状态卡·徽章', F_CJK16, CARD_PAD, CARD_Y + macro('UI_STATE_CHIP_Y'),
-       chip_width('待审批'), CHIP_H, '待审批', 1),
+    # 状态灯：22×22 圆，无文字。状态词只在大字出现一次（见 app_ui.c refresh_state）
+    El('状态卡·状态灯', F_CJK16, CARD_PAD, CARD_Y + macro('UI_STATE_CHIP_Y'),
+       CHIP_W, CHIP_H, '', 0),
     # 计时贴右上角：**16px 思源**，跨小时不再降字号（见 app_ui.c refresh_timer）。
     # 最宽形态是 "10:23:45"（8 字符），按它建模；框宽 +2 缓冲。
     #   旧模型是"16px 点阵 6 字符 / 8px 点阵 8 字符"两份 —— 那是因为等宽点阵
@@ -266,9 +263,10 @@ HOME = [
        TIMER_W, LINE_H_CJK16, '10:23:45', 1),
     El('状态大字', F_XL, CARD_PAD, CARD_Y + macro('UI_STATE_TEXT_Y'),
        macro('UI_STATE_HINT_W'), macro('UI_LINE_H_XL'), '运行中', 1),
+    # 提示行：现在专职显示主机下发的任务标题，没有标题就空着
+    # （以前这里还会复述一遍状态，例如"没有正在执行的任务"，属重复）
     El('状态提示', F_CJK, CARD_PAD, CARD_Y + macro('UI_STATE_HINT_Y'),
-       macro('UI_STATE_HINT_W'), macro('UI_STATE_HINT_H'),
-       '没有正在执行的任务', macro('UI_STATE_HINT_LINES')),
+       macro('UI_STATE_HINT_W'), macro('UI_STATE_HINT_H'), '', 0),
     El('状态提示·主机', F_CJK, CARD_PAD, CARD_Y + macro('UI_STATE_HINT_Y'),
        macro('UI_STATE_HINT_W'), macro('UI_STATE_HINT_H'),
        '执行质量检查并生成报告', macro('UI_STATE_HINT_LINES'), True),
