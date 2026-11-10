@@ -128,7 +128,7 @@ http://127.0.0.1:19387/dsh-passport
 | dsh CLI | `0.2.0-rc.2` | `dsh --version` 实测；`@deepseek-ai/dsh` 全局安装 |
 | dsh-tui | launcher `0.14.0` / profile `0.17.0` | `dsh-tui --version` 实测，profile 目录 `~/.dsh/profiles/dsh-tui` |
 | 插件（本仓） | `1.4.0` | `packages/dsh-ai-passport/package.json` |
-| 设备固件 | `1.4.0` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
+| 设备固件 | `1.4.1` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
 | BLE 协议 | `v1` | 双端常量 `PROTOCOL_VERSION` ↔ `AP_PROTOCOL_VERSION`，取较小值运行 |
 | 固件基线 | `main @ 0b9e4c8` | 上游 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport) |
 | Node | ≥ 22（插件自身）；DSH `0.2.2-rc.1` 要求 ≥ 24.9.0 | 开发机 `v22.22.2` 跑 `npm test` 全绿；桌面版自带 Node（`Contents/Resources/runtime/bin/node`，版本随 App 走） |
@@ -169,7 +169,8 @@ http://127.0.0.1:19387/dsh-passport
 - `1.0.0` —— 阶段 A/B/C 全功能首个版本（任务台/审批/余额/语音/配对）。
 
 > 设备固件见 [ai-passport-dsh releases](https://github.com/slinxiaosun-blip/ai-passport-dsh/releases)：
-> `1.4.0`（语音结果独立页 + 下键翻页、状态卡与设置项调整；重连后固件/电量可靠上报）。
+> `1.4.1`（行为等价补丁：修复 Linux CI 的 `strnlen` 静态检查）与 `1.4.0`
+> （语音结果独立页 + 下键翻页、状态卡与设置项调整；重连后固件/电量可靠上报）。
 > 协议 v1 未变，固件与插件可独立升级。
 
 > 插件依赖 DSH `0.2.x` 的 `ctx.webServer` / `speechToText` / `deepseekAccount`
