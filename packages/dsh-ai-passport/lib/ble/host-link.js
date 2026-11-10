@@ -37,6 +37,9 @@ import { LINK_STATE, TransportError, TRANSPORT_ERROR } from './transport.js'
 /** 重连退避序列（毫秒）。到顶后保持，不再无限增长。 */
 const RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10000, 20000, 30000]
 
+/** 发送队列积压到此长度就跳过本轮 ping：拥塞时再灌控制消息只会更糟。 */
+const HEARTBEAT_QUEUE_BACKLOG_LIMIT = 4
+
 /**
  * 下行发送队列。
  *
@@ -118,6 +121,8 @@ export class HostLink extends EventEmitter {
     this.transport = options.transport
     this.targetDeviceId = options.targetDeviceId
     this.autoReconnect = options.autoReconnect ?? true
+    /** 用户主动断开的标记：与配置里的 autoReconnect 分开，stop() 不再改写配置。 */
+    this.userStopped = false
     this.logger = options.logger ?? (() => {})
 
     this.reassembler = new Reassembler()
@@ -171,6 +176,16 @@ export class HostLink extends EventEmitter {
   // —— 公共 API ——
 
   /**
+   * 当前链路状态（transport.state 的只读投影）。
+   *
+   * ★ 之前 HostLink 没有这个属性，而 runtime.connect() / disconnect() 直接读
+   *   `link.state`：恒为 undefined，去重判断永不生效、返回值也没有状态。
+   */
+  get state() {
+    return this.transport.state
+  }
+
+  /**
    * 注册一个消息处理器。
    *
    * @param {string} type MSG 中的类型
@@ -187,6 +202,8 @@ export class HostLink extends EventEmitter {
   /** 启动：扫描并连接目标设备。 */
   async start() {
     if (this.disposed) throw new TransportError(TRANSPORT_ERROR.NOT_AVAILABLE, '链路已关闭')
+    // 用户重新点了连接：清除"主动断开"标记，自动重连恢复生效。
+    this.userStopped = false
     const probe = await this.transport.probe()
     if (!probe.available) {
       throw new TransportError(TRANSPORT_ERROR.NOT_AVAILABLE, probe.reason ?? '传输不可用', {
@@ -198,7 +215,11 @@ export class HostLink extends EventEmitter {
 
   /** 停止扫描/断开/停止重连。 */
   async stop(reason = 'user') {
-    this.autoReconnect = false
+    // ★ 只置"本轮主动断开"标记，**不改写 this.autoReconnect**。
+    //   旧写法直接把配置项改成 false：用户点一次断开，此后 start() 再连上也不再有
+    //   自动重连（配置被永久改脏）；若配置原本就是 autoReconnect:false，stop() 之后
+    //   连"重新点连接"都无法恢复。两件事语义不同，必须分开存。
+    this.userStopped = true
     this.#clearReconnectTimer()
     this.#stopHeartbeat()
     if (this.transport.state === LINK_STATE.SCANNING) await this.transport.stopScan()
@@ -327,9 +348,10 @@ export class HostLink extends EventEmitter {
     this.missedHeartbeats = 0
     this.heartbeatTimer = setInterval(() => {
       if (this.transport.state !== LINK_STATE.CONNECTED) return
-      // ★ 发送队列积压时跳过 ping（见下方），**也不计入丢失** ——
-      //   ping 根本没发出去，"没收到 pong"不等于"对端不在线"。
-      if (this.sendQueue.length > 4) {
+      // ★ 发送队列积压时跳过 ping：语音突发时 sendQueue 可能积压几十条，
+      //   再塞一条 ping 只会加剧拥塞；而且 ping 根本没发出去，
+      //   "没收到 pong"不等于"对端不在线"，因此**也不计入丢失**。
+      if (this.sendQueue.length > HEARTBEAT_QUEUE_BACKLOG_LIMIT) {
         this.logger('debug', `[link] 发送队列积压 ${this.sendQueue.length}，跳过本次心跳`)
         return
       }
@@ -337,26 +359,17 @@ export class HostLink extends EventEmitter {
       if (this.missedHeartbeats > HEARTBEAT_MISS_LIMIT) {
         this.logger('warn', `[link] 连续 ${this.missedHeartbeats} 次心跳无响应，判定掉线`)
         this.#stopHeartbeat()
-        // 交给 transport 处理底层断开，再走统一的重连路径
-        void this.transport.disconnect('heartbeat-timeout')
+        // ★ 必须带 unexpected:true，否则 transport 只会发一个普通 disconnect，
+        //   HostLink 那边看到 unexpected=false 就不排重连 —— 心跳判死等于把设备
+        //   永久踢下线，「自动重连」在最需要它的场景里反而不生效。
+        void this.transport.disconnect('heartbeat-timeout', { unexpected: true })
         return
       }
       // 心跳不带 ACK：它的"回应"就是 pong，不需要额外重传层。
       //
       // ★ 语音上行期间音频通知会把控制通道挤拥塞，ping/pong 都可能丢。
-      //   丢失不是"主机走了"，只是这一轮没送达 —— 之前 missedHeartbeats 一丢就
-      //   累加，3 丢就判定掉线，于是"识别后有时自己断开连接"。
-      //
-      //   修法（两层）：
-      //   1. **发送队列积压时不发 ping**：语音突发时 sendQueue 可能积压几十条，
-      //      再塞一条 ping 只会加剧拥塞，而且 ping 发不出去还会被误计为"丢失"。
-      //   2. **收任何控制消息都算心跳存活**：不只 pong，ACK/NACK/hello/voice.result
-      //      都证明对端还在（见 #dispatch）。
-      if (this.sendQueue.length > 4) {
-        // 队列积压：跳过这次 ping（不算丢失 —— 等拥塞缓解后自然恢复）。
-        this.logger('debug', `[link] 发送队列积压 ${this.sendQueue.length}，跳过本次心跳`)
-        return
-      }
+      //   丢失不是"主机走了"，只是这一轮没送达 —— 所以 #dispatch 里把
+      //   "收到任意控制消息"都算心跳存活（见那里的注释）。
       this.send(MSG.PING, { t: Date.now() }, { ack: false, channel: CHANNEL.HEARTBEAT }).catch(() => {})
     }, HEARTBEAT_INTERVAL_MS)
     this.heartbeatTimer.unref?.()
@@ -385,11 +398,12 @@ export class HostLink extends EventEmitter {
     this.handshakeComplete = false
     this.stats.connectedAt = null
     this.emit('disconnected', payload)
-    if (payload.unexpected && this.autoReconnect) this.#scheduleReconnect()
+    // 用户主动 stop() 过 → 不再自动重连（userStopped 由下一次 start() 清除）。
+    if (payload.unexpected && this.autoReconnect && !this.userStopped) this.#scheduleReconnect()
   }
 
   #scheduleReconnect() {
-    if (!this.autoReconnect || this.disposed || this.reconnectTimer) return
+    if (!this.autoReconnect || this.userStopped || this.disposed || this.reconnectTimer) return
     const delay = RECONNECT_BACKOFF_MS[Math.min(this.reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1)]
     this.reconnectAttempt += 1
     this.stats.reconnects += 1
@@ -397,7 +411,8 @@ export class HostLink extends EventEmitter {
     this.emit('reconnecting', { attempt: this.reconnectAttempt, delayMs: delay })
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
-      if (this.disposed || !this.autoReconnect) return
+      // 退避期间用户可能又点了断开：这里再判一次，别把它刚关掉的链路又拉起来。
+      if (this.disposed || this.userStopped || !this.autoReconnect) return
       void this.transport.startScan().catch((error) => {
         this.lastError = error
         this.emit('link-error', error)
@@ -478,6 +493,13 @@ export class HostLink extends EventEmitter {
   }
 
   #dispatch(message, result) {
+    // ★ 收到任何能解析出 JSON 的消息都算"对端还活着"，不只 pong。
+    //   ACK/NACK/hello/voice.result/task.* 都证明设备在正常工作。
+    //   旧写法只在 PONG 分支里清零：语音上行把控制通道挤满时，pong 连丢几次
+    //   就会被误判掉线（表现为"识别完有时自己断连"）。
+    //   放在 switch 之前，任何分支都吃到，也不会漏掉未来新增的消息类型。
+    this.missedHeartbeats = 0
+
     // 协议级消息在这里就地处理，不下发到业务域。
     switch (message.type) {
       case MSG.ACK:
@@ -488,7 +510,6 @@ export class HostLink extends EventEmitter {
         this.emit('nack', message)
         return
       case MSG.PONG:
-        this.missedHeartbeats = 0
         this.emit('pong', message)
         return
       case MSG.HELLO:
@@ -512,12 +533,35 @@ export class HostLink extends EventEmitter {
       case MSG.PING:
         this.send(MSG.PONG, { t: message.t }, { ack: false, channel: CHANNEL.HEARTBEAT }).catch(() => {})
         break
-      case MSG.HELLO_ACK:
+      case MSG.HELLO_ACK: {
         // 设备确认主机已就绪 → 握手闭环完成。业务域可以在此之后开始推送状态，
         // 提前推送会因为设备端还没建好界面而丢失。
+        //
+        // ★ hello.ack 里也带 firmware/batteryPercent（固件 1.3.x 起）：设备主动
+        //   发的 hello 在个别重连时序下可能没被解析，而 ack 是必经的一条，
+        //   用它兜底，面板就不会一直显示"—"。
+        const hasFirmware = typeof message.firmware === 'string' && message.firmware.length > 0
+        if (this.deviceInfo) {
+          // 正常路径：hello 已经填好，ack 只做增量覆盖
+          if (hasFirmware) this.deviceInfo.firmware = message.firmware
+          if (message.protocolVersion != null) this.deviceInfo.protocolVersion = Number(message.protocolVersion) || 0
+          if (message.capabilities != null) this.deviceInfo.capabilities = Number(message.capabilities) || 0
+          if (message.batteryPercent != null) this.deviceInfo.batteryPercent = Number(message.batteryPercent)
+          this.emit('device-info', this.deviceInfo)
+        } else if (hasFirmware) {
+          // 兜底：hello 没被解析出来（个别重连时序），但 ack 带了固件，就补一份。
+          this.deviceInfo = {
+            firmware: message.firmware,
+            protocolVersion: Number(message.protocolVersion) || 0,
+            capabilities: Number(message.capabilities) || 0,
+            batteryPercent: message.batteryPercent != null ? Number(message.batteryPercent) : null,
+          }
+          this.emit('device-info', this.deviceInfo)
+        }
         this.handshakeComplete = true
         this.emit('ready', { deviceInfo: this.deviceInfo, host: message })
         break
+      }
       default:
         break
     }

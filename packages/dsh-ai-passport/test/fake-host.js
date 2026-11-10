@@ -11,6 +11,8 @@
  *   - `approval/request` 是瀑布：监听者返回非 undefined 即终止后续；
  *   - `session/event` 是 post-commit 的 fire-and-forget 广播；
  *   - 可选服务通过 `ctx.get(name)` 暴露，不存在时返回 undefined。
+ *   - `tools.register()` 强制校验 `output`（与真宿主 0.2.1-rc.5 / 0.2.2-rc.1 一致）。
+ *     假宿主早先照单全收，插件漏写 output 时测试全绿、真机却一个工具都没注册上。
  */
 
 import { EventEmitter } from 'node:events'
@@ -147,23 +149,44 @@ export class FakeHost extends EventEmitter {
     this.registeredTools = new Map()
     this.tools = {
       register: (definition) => {
+        assertToolDefinition(definition)
         this.registeredTools.set(definition.name, definition)
         return () => this.registeredTools.delete(definition.name)
       },
     }
 
-    this.webServer = {
+    // ★ 这里的 this 必须显式绑定到 webServer 本身。
+    //   旧写法是 `this.webServer = { routes: new Map(), register: (route) => this.routes.set(...) }`
+    //   —— 箭头函数捕获的是 FakeHost 实例，`this.routes` 根本不存在，
+    //   于是 register 一律抛 `Cannot read properties of undefined (reading 'set')`。
+    //   插件那边把它 catch 成一条 warn（"面板注册失败"），测试全绿、面板其实从没注册上。
+    const webServer = {
       routes: new Map(),
       register: (route) => {
-        this.routes.set(`${route.kind}:${route.path}`, route)
-        return () => this.routes.delete(`${route.kind}:${route.path}`)
+        webServer.routes.set(`${route.kind}:${route.path}`, route)
+        return () => webServer.routes.delete(`${route.kind}:${route.path}`)
       },
       tapIndex: () => () => {},
     }
+    this.webServer = webServer
 
     this.connection = {
       requestRejection: () => null,
     }
+  }
+
+  /**
+   * 复刻 Cordis 的 `ctx.on()` 语义：**返回注销函数**。
+   *
+   * EventEmitter.on 返回的是 this（宿主本身）。不覆写的话，插件里所有
+   * `unsubscribes.push(ctx.on(...))` 推入的都是宿主对象，卸载时 `unsubscribe()`
+   * 直接 TypeError 然后被 catch 吞掉 —— 于是"订阅退没退掉"在测试里根本看不出来。
+   * （真宿主返回的是 disposer，所以这只是假宿主与真宿主的行为差异。）
+   */
+  on(event, listener, options) {
+    super.on(event, listener)
+    void options
+    return () => this.off(event, listener)
   }
 
   /** 模拟 DSH 的可选服务读取语义。 */
@@ -264,5 +287,49 @@ export class FakeHost extends EventEmitter {
     const result = await next()
     if (result === undefined) return { outcome: 'allowed-once', via: 'fallback-downstream' }
     return { outcome: result, via: 'listener' }
+  }
+}
+
+/**
+ * 复刻 DSH 的 `tools.register()` 注册期硬校验（0.2.1-rc.5 与 0.2.2-rc.1 行为一致）。
+ *
+ * 真宿主会在 register 里直接抛 `tool "..." must declare output { schema, render, ... }`，
+ * 并用 assertSupportedJsonSchema 限制 output.schema 的可用关键字。假宿主早先不校验，
+ * 于是「插件漏写 output」这类错误在 184 项测试里完全看不见 —— 这里把它钉死。
+ */
+const OUTPUT_SCHEMA_KEYS = new Set([
+  'type', 'oneOf', 'properties', 'required', 'additionalProperties',
+  'items', 'enum', 'const', 'description', 'title', 'default', 'examples',
+])
+const JSON_SCHEMA_TYPES = new Set(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null'])
+
+function assertToolDefinition(definition) {
+  const output = definition?.output
+  if (!output || typeof output !== 'object'
+    || typeof output.render !== 'function'
+    || (output.presentationMeta !== undefined && typeof output.presentationMeta !== 'function')) {
+    throw new TypeError(`tool "${definition?.name}" must declare output { schema, render, presentationMeta? }`)
+  }
+  assertOutputSchema(output.schema, 'output.schema')
+}
+
+function assertOutputSchema(schema, path) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    throw new TypeError(`${path} 必须是 JSON Schema 对象`)
+  }
+  for (const key of Object.keys(schema)) {
+    if (!OUTPUT_SCHEMA_KEYS.has(key)) throw new TypeError(`${path} 含宿主不支持的关键字：${key}`)
+  }
+  if (schema.type !== undefined && !JSON_SCHEMA_TYPES.has(schema.type)) {
+    throw new TypeError(`${path}.type 非法：${schema.type}`)
+  }
+  if (schema.properties && typeof schema.properties === 'object') {
+    for (const [key, child] of Object.entries(schema.properties)) {
+      assertOutputSchema(child, `${path}.properties.${key}`)
+    }
+  }
+  if (schema.items) assertOutputSchema(schema.items, `${path}.items`)
+  if (Array.isArray(schema.oneOf)) {
+    schema.oneOf.forEach((child, index) => assertOutputSchema(child, `${path}.oneOf[${index}]`))
   }
 }

@@ -264,6 +264,7 @@ export const TASK_STATE = Object.freeze({
   IDLE: 'idle',
   RUNNING: 'running',
   WAITING_APPROVAL: 'waiting_approval',
+  WAITING_QUESTION: 'waiting_question',
   COMPLETED: 'completed',
 })
 

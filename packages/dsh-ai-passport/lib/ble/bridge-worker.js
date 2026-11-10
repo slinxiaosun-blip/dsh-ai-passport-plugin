@@ -20,6 +20,7 @@
 import { createInterface } from 'node:readline'
 
 import { ADV, DEVICE_NAME, SHORT_DEVICE_NAME, PROTOCOL_VERSION, UUID } from '../protocol/constants.js'
+import { createStdoutQueue } from './stdout-queue.js'
 
 const MOCK = process.argv.includes('--mock')
 
@@ -36,24 +37,23 @@ function log(level, message) {
   process.stderr.write(`[ble-bridge] ${level} ${message}\n`)
 }
 
-let stdoutBlocked = false
+/**
+ * ★ 这段曾经是"假背压"：注释写着"返回 false 时暂停发送，等 drain 再继续"，
+ *   代码却只改了个布尔标志，之后照样继续 write —— 数据全部堆进 Node 的
+ *   Writable 缓冲，内存照样无限涨。真机表现："语音识别完插件断开/桥进程退出"
+ *   （桥进程被 OOM 杀掉）。
+ *
+ *   真正的队列逻辑抽到了 ./stdout-queue.js：那边可以被单测覆盖，
+ *   这里只负责把进程的 stdout 接上去。
+ */
+const stdout = createStdoutQueue({
+  write: (line) => process.stdout.write(line),
+  onDrain: (callback) => process.stdout.once('drain', callback),
+  log,
+})
+
 function send(payload) {
-  const line = `${JSON.stringify(payload)}\n`
-  // ★ 必须检查 write() 的返回值：语音上行期间每 20ms 就有一批音频数据，
-  //   stdout 管道背压时 write() 返回 false —— 忽略它会无限堆积内存，
-  //   最终桥进程 OOM 被杀（表现为"插件断开/桥进程退出"）。
-  //   返回 false 时暂停发送，等 drain 事件再继续；数据本身不丢
-  //   （Noble 的 data 事件是推模式，我们只能靠 stdout 缓冲扛住突发）。
-  const ok = process.stdout.write(line)
-  if (!ok) {
-    if (!stdoutBlocked) {
-      stdoutBlocked = true
-      process.stderr.write('[bridge] stdout 背压，暂停发送等待 drain\n')
-    }
-  } else if (stdoutBlocked) {
-    stdoutBlocked = false
-    process.stderr.write('[bridge] stdout 已恢复\n')
-  }
+  stdout.send(payload)
 }
 
 function reply(id, value) {
@@ -275,18 +275,31 @@ class Bridge {
     this.seenInScan.clear()
     if (this.scanning) return
     this.scanning = true
-    // allowDuplicates=false：省电，也避免同一个设备刷屏。
-    // 但这也意味着 RSSI 只在首次发现时上报，面板不应期待实时刷新。
-    await this.noble.startScanningAsync([], false).catch(async () => {
-      // 老实现没有 Promise 版本
-      await new Promise((resolve, reject) => {
-        try {
-          this.noble.startScanning([], false, (error) => (error ? reject(error) : resolve()))
-        } catch (error) {
-          reject(error)
-        }
-      })
-    })
+    try {
+      // allowDuplicates=false：省电，也避免同一个设备刷屏。
+      // 但这也意味着 RSSI 只在首次发现时上报，面板不应期待实时刷新。
+      if (typeof this.noble.startScanningAsync === 'function') {
+        await this.noble.startScanningAsync([], false)
+      } else if (typeof this.noble.startScanning === 'function') {
+        // 老实现没有 Promise 版本
+        await new Promise((resolve, reject) => {
+          try {
+            this.noble.startScanning([], false, (error) => (error ? reject(error) : resolve()))
+          } catch (error) {
+            reject(error)
+          }
+        })
+      } else {
+        throw Object.assign(new Error('当前 noble 实现没有 startScanning'), { code: 'not-available' })
+      }
+    } catch (error) {
+      // ★ 启动失败必须把标志复位。旧写法在 await 之前就置了 scanning=true，
+      //   一旦底层抛错（适配器刚断电、权限被拒），这个 true 就永久留下：
+      //   之后每次 startScan() 都在 `if (this.scanning) return` 处直接返回，
+      //   表现为"点了连接永远没反应"，用户只能重启插件。
+      this.scanning = false
+      throw error
+    }
   }
 
   async stopScan() {
@@ -295,9 +308,16 @@ class Bridge {
       return
     }
     this.scanning = false
-    await this.noble.stopScanningAsync?.().catch(() => {}) ?? Promise.resolve()
-    if (typeof this.noble.stopScanning === 'function' && typeof this.noble.stopScanningAsync !== 'function') {
-      this.noble.stopScanning()
+    // 同步抛错 / 返回非 Promise 都兜住：停止扫描失败不该把上层卡在这里，
+    // 我们真正需要的只是"标志位归零、下一次能重新扫描"。
+    try {
+      if (typeof this.noble.stopScanningAsync === 'function') {
+        await this.noble.stopScanningAsync()
+      } else if (typeof this.noble.stopScanning === 'function') {
+        this.noble.stopScanning()
+      }
+    } catch (error) {
+      log('debug', `停止扫描失败（已忽略）：${error?.message ?? error}`)
     }
   }
 
@@ -619,7 +639,11 @@ class Bridge {
 
   async write(channel, base64) {
     if (MOCK) return
-    const characteristic = channel === 'voice' ? this.characteristics.rx : this.characteristics.rx
+    // 上行走 RX 一个特征值就够：UUID.VOICE 是**设备→主机**的通知通道（音频上行），
+    // 没有对应的下行语音特征。之前的写法是 `channel === 'voice' ? rx : rx` ——
+    // 两个分支完全一样，读起来像"voice 走另一条通道"，实际是死三元，容易误导。
+    void channel
+    const characteristic = this.characteristics.rx
     if (!characteristic) throw Object.assign(new Error('未连接或无 RX 特征值'), { code: 'disconnected' })
     const bytes = Buffer.from(base64, 'base64')
     // withoutResponse 更快；ble 栈在拥塞时会自己排队，父进程的发送队列已经做了节流。

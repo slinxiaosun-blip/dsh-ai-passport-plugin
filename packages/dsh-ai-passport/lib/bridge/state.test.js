@@ -341,7 +341,7 @@ test('静默超过 idleEndMs 才结束：先进「已完成」，再回空闲', 
   }
 })
 
-test('turn/end 立即结束：状态进「已完成」，不再下发计时', () => {
+test('turn/end 立即结束：状态进「已完成」，并带上最终用时（静态显示）', () => {
   const clock = useFakeClock()
   try {
     const { link, domain, ctx } = makeDomain()
@@ -353,7 +353,9 @@ test('turn/end 立即结束：状态进「已完成」，不再下发计时', ()
     assert.equal(domain.snapshot().runningCount, 0)
     const payload = lastTaskState(link)
     assert.equal(payload.state, TASK_STATE.COMPLETED)
-    assert.equal(payload.elapsedMs, undefined, '结束后不该带着一个还在走的数字')
+    // 用户要求：完成后在计时位置显示"完成的时间"，所以这里下发**最终用时**，
+    // 设备端静态显示、不再走秒。与运行态的 elapsedMs 语义不同（静态 vs 走秒）。
+    assert.equal(payload.elapsedMs, 5_000, '完成后带上本次任务的最终用时')
   } finally {
     clock.restore()
   }
@@ -414,4 +416,23 @@ test('每次推送都带主机墙钟：UTC 秒 + 时区偏移分钟', () => {
   } finally {
     clock.restore()
   }
+})
+
+test('待回答：问题挂起时状态为 waiting_question，优先级低于待审批、高于运行中', () => {
+  const { domain } = makeDomain()
+  domain.running.add('s1')
+  domain.runStarts.set('s1', Date.now())
+
+  domain.setQuestion('要继续吗？')
+  assert.equal(domain.current().state, TASK_STATE.WAITING_QUESTION)
+  assert.equal(domain.current().title, '要继续吗？')
+
+  // 审批优先于追问：两者同时挂起时，设备先提示审批
+  domain.setApproval('执行 rm -rf')
+  assert.equal(domain.current().state, TASK_STATE.WAITING_APPROVAL)
+  domain.setApproval(null)
+
+  // 追问结束 → 回到运行中
+  domain.setQuestion(null)
+  assert.equal(domain.current().state, TASK_STATE.RUNNING)
 })

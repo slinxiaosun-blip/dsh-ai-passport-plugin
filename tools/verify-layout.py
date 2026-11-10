@@ -269,9 +269,9 @@ HOME = [
     El('状态卡·状态灯', F_CJK16,
        ROW_X, CARD_Y + macro('UI_STATE_ROW_Y') + macro('UI_STATE_CHIP_INSET'),
        CHIP_W, CHIP_H, '', 0),
-    # 计时贴右上角：**28px 计时字体**（只有数字与冒号），跨小时不降字号。
+    # 计时在状态信息行**正下方居中**（11-09 用户要求；原先贴右上角，与状态词各占一端）。
     # 最宽形态 "10:23:45" 实宽 107.4px；框宽 +2 缓冲。
-    El('状态卡·计时', F_TIMER, UI_W - CARD_PAD - TIMER_W, CARD_Y + macro('UI_STATE_TIMER_Y'),
+    El('状态卡·计时', F_TIMER, (UI_W - TIMER_W) // 2, CARD_Y + macro('UI_STATE_TIMER_Y'),
        TIMER_W, LINE_H_TIMER, '10:23:45', 1),
     El('状态大字', F_XL, ROW_X + CHIP_W + CHIP_GAP, CARD_Y + macro('UI_STATE_ROW_Y'),
        ROW_TEXT_W, LINE_H_XL, '运行中', 1),

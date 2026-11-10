@@ -128,6 +128,26 @@ export class ApprovalDomain {
         this.#settle(id, decision === DECISION.ALLOW ? 'allowed-once' : 'rejected', 'device')
       }),
     )
+
+    // ★ 断链兜底（真机上会**卡死整轮对话**的一条）。
+    //
+    //   设备一走，它就不可能再作答；而 #askDeviceHandle 返回的 answer 只有
+    //   "设备作答 / 超时 / 请求方中止 / 电脑先答"四种结算方式。当配置里
+    //   timeoutMs=0（用户要求"审批页一直等"）且电脑端没有回答者时，
+    //   `await handle.answer` 会永久挂住 —— 电脑卡片早答完了，DSH 的那一轮
+    //   却永远不返回，表现是"点了审批之后 agent 不动了"。
+    //
+    //   结算值刻意用 'disconnected' 而**不是** 'cancelled'：cancelled 的语义是
+    //   "请求方自己取消"（见下方 outcome 映射），会让电脑端卡片一起作废；
+    //   断链时电脑端仍然可以正常审批，必须让它留着。
+    this.disposers.push(
+      this.link.on('disconnected', () => {
+        if (this.pending.size === 0) return
+        this.#trace(`链路断开，${this.pending.size} 个待审批交回电脑端`)
+        this.logger('warn', `[approval] 链路断开，${this.pending.size} 个待审批请求交回电脑端`)
+        for (const id of [...this.pending.keys()]) this.#settle(id, 'disconnected', 'link')
+      }),
+    )
   }
 
   /**
@@ -346,6 +366,13 @@ export class ApprovalDomain {
         // 请求方自己取消了：回 'cancelled' 而不是交回下游，
         // 因为下游再问一次也只会得到同样的取消。
         return 'cancelled'
+      }
+      if (result.outcome === 'disconnected') {
+        // 设备断链：我们这边**没有**作出任何决定，请求方也没有取消。
+        // 返回 null = "设备没答上来"，竞速里继续等电脑卡片（fail closed）。
+        // 绝不能返回 'cancelled'：那等于替电脑端的用户按了取消。
+        this.logger('warn', `[approval] 设备断链，审批交回电脑端：${toolName}`)
+        return null
       }
       if (result.outcome === 'send-failed') return null
       return result.outcome

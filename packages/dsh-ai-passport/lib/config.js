@@ -56,7 +56,7 @@ const DEFAULTS = Object.freeze({
     readOnlyToolsOnDevice: false,
   }),
   // 追问/计划评审（docs/06 §3/§4）。超时无作答一律交回电脑端，绝不悬挂。
-  questions: Object.freeze({ enabled: true, timeoutMs: 120000 }),
+  questions: Object.freeze({ enabled: true, timeoutMs: 0 }),
   logLevel: 'info',
 })
 
@@ -111,7 +111,7 @@ export function normalizeConfig(raw) {
     questions: {
       enabled: bool(input.questions?.enabled, DEFAULTS.questions.enabled),
       // 超时下限 10 秒（看清一道题的时间），上限 10 分钟；到点交回电脑端
-      timeoutMs: clamp(int(input.questions?.timeoutMs, DEFAULTS.questions.timeoutMs), 10000, 600000),
+      timeoutMs: clamp(int(input.questions?.timeoutMs, DEFAULTS.questions.timeoutMs), 0, 600000),
     },
     logLevel: ['debug', 'info', 'warn', 'error'].includes(input.logLevel) ? input.logLevel : DEFAULTS.logLevel,
   }
@@ -175,7 +175,7 @@ export async function loadConfigSchema() {
       questions: z
         .object({
           enabled: z.boolean().default(true),
-          timeoutMs: z.natural().min(10000).max(600000).default(DEFAULTS.questions.timeoutMs),
+          timeoutMs: z.natural().min(0).max(600000).default(DEFAULTS.questions.timeoutMs),
         })
         .default({}),
       logLevel: z.union([z.const('debug'), z.const('info'), z.const('warn'), z.const('error')]).default('info'),

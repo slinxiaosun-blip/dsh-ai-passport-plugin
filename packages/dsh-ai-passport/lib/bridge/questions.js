@@ -121,6 +121,8 @@ export class QuestionsDomain {
     this.broadcast = shared.broadcast
     this.domainState = shared.domainState
     this.ctx = null
+    /** StateDomain：由 index.js 注入，用来把「待回答」推给状态卡（可空）。 */
+    this.stateDomain = null
     this.unsubscribes = []
     this.disposers = []
 
@@ -167,6 +169,15 @@ export class QuestionsDomain {
     this.unsubscribes.push(() => this.link.off?.('disconnected', onDisconnected))
   }
 
+  /** 让状态卡显示/清除「待回答」；没有注入 StateDomain 时静默跳过。 */
+  #setQuestionState(title) {
+    try {
+      this.stateDomain?.setQuestion?.(title)
+    } catch (error) {
+      this.logger('debug', `[questions] 同步待回答状态失败：${error?.message ?? error}`)
+    }
+  }
+
   /** 记一条拦截轨迹（面板 state.json 可读）。 */
   #trace(event) {
     this.trace.push({ at: Date.now(), event })
@@ -182,6 +193,87 @@ export class QuestionsDomain {
       index: this.pending.index,
       total: this.pending.questions.length,
     }
+  }
+
+  /**
+   * 给 Agent 工具（`ap_device_ask`）用的单次设备问答。
+   *
+   * ★ 为什么不许工具自己注册 handler：`HostLink.onMessage` 同类型只有一个
+   *   handler（`this.handlers.set`），工具若监听 question.pick / question.answer
+   *   会**直接顶掉**本域的 DSH 追问瀑布。所以工具只调这个方法，批次仍由本域
+   *   持有，复用 #onPick / #onAnswer / #cancelDevice / #sendQuestion / #sendDone
+   *   整套既有逻辑（载荷预算、done 收页、断链与超时兜底都不用重写）。
+   *
+   * 设备回的 `question.pick.selected` 只有**标签文本**、没有下标，因此这里
+   * 记下下发时的截断标签集，提交时按文本反查下标交给工具。
+   *
+   * @param {object} options
+   * @param {string} options.callId 批次 id（question.done 必须同值才能收页）
+   * @param {string} options.question 题干
+   * @param {string[]} options.options 选项文本
+   * @param {number} options.timeoutMs 超时毫秒（0 = 不超时）
+   * @returns {Promise<{index:number,label:string,custom:string}|null>}
+   *   null = 未作答（设备忙 / 取消 / 超时 / 断链 / 下发失败）；
+   *   `index: -1` 表示用户没选选项、只留了「其他」自定义文本。
+   */
+  askOnDevice({ callId, question, options, timeoutMs }) {
+    if (this.pending) {
+      this.#trace('工具提问：设备正忙，拒绝新批次')
+      this.logger('warn', '[questions] 设备已有未结束的问答批次，本次工具提问不下发')
+      return Promise.resolve(null)
+    }
+    if (this.link.snapshot().state !== 'connected') {
+      return Promise.resolve(null)
+    }
+
+    // 与 #sendQuestion 下发时完全相同的截断规则，保证回包文本能对上下标。
+    const labels = (Array.isArray(options) ? options : [])
+      .slice(0, BUDGET.maxOptions)
+      .map((label) => clampText(label, BUDGET.optionLabelChars).replaceAll('|', '/'))
+    if (labels.length === 0) return Promise.resolve(null)
+
+    const batchId = String(callId)
+    const qid = `${batchId}-0`
+    const timeout = Math.max(0, Number(timeoutMs) || 0)
+    return new Promise((resolve) => {
+      // 归一化：#cancelDevice / #settleDeviceReject 也会调 settle，工具只认
+      // `{index}` 或 null，别让竞速用的 {kind,value} 漏到工具层。
+      const settle = (value) => resolve(
+        value && typeof value === 'object' && Number.isInteger(value.index) ? value : null,
+      )
+      this.pending = {
+        callId: batchId,
+        kind: 'choice',
+        source: 'tool',
+        optionLabels: labels,
+        questions: [{
+          id: qid,
+          question: String(question ?? ''),
+          detail: '',
+          multiSelect: false,
+          intent: null,
+          options: labels.map((label) => ({ label, description: '', recommended: false })),
+        }],
+        picks: new Map(),
+        index: 0,
+        timeoutMs: timeout,
+        startedAt: Date.now(),
+        settle,
+        settled: false,
+        timer: timeout > 0
+          ? setTimeout(() => {
+              // 只收自己这一批：批次结束后可能已经开了新批次，别误杀。
+              if (this.pending?.source === 'tool' && this.pending.callId === batchId) {
+                this.#cancelDevice('timeout')
+              }
+            }, timeout)
+          : null,
+      }
+      // 状态卡先切「待回答」：即使覆盖页还没弹出，主页也能看到"机器在等我"
+      this.#setQuestionState(question)
+      this.logger('info', `[questions] 工具提问 ${batchId}（${labels.length} 项，${timeout}ms）`)
+      this.#sendQuestion(0)
+    })
   }
 
   async dispose() {
@@ -321,7 +413,7 @@ export class QuestionsDomain {
     }
     if (pending.timer) clearTimeout(pending.timer)
     // 不设超时的批次（计划待审）继续不设：补答窗口也不该自己关。
-    const timeoutMs = pending.timeoutMs > 0 ? (this.config.questions?.timeoutMs ?? 120_000) : 0
+    const timeoutMs = pending.timeoutMs > 0 ? (this.config.questions?.timeoutMs ?? 0) : 0
     pending.timeoutMs = timeoutMs
     pending.startedAt = Date.now()
     pending.timer = timeoutMs > 0 ? setTimeout(() => this.#cancelDevice('timeout'), timeoutMs) : null
@@ -390,7 +482,7 @@ export class QuestionsDomain {
     const isPlanReview = questions.some((q) => q.intent?.kind === 'plan-review')
     // ★ 计划待审**不设超时**（用户要求）：一直停在设备页，等到用户在电脑端或设备端作答。
     //   普通追问仍按 questions.timeoutMs 收页（未在需求内，行为不变）。
-    const timeoutMs = isPlanReview ? 0 : (this.config.questions?.timeoutMs ?? 120_000)
+    const timeoutMs = isPlanReview ? 0 : (this.config.questions?.timeoutMs ?? 0)
     return new Promise((resolve) => {
       this.pending = {
         callId: extractCallId(request),
@@ -425,6 +517,8 @@ export class QuestionsDomain {
         }, CONTINUED_GRACE_MS)
       }, { once: true })
 
+      // 状态卡切「待回答」：与工具提问同一条路径，覆盖页未弹出时主页也能看到
+      this.#setQuestionState(questions[0]?.question ?? questions[0]?.summary ?? '')
       this.logger('info', `[questions] 收到 ${questions.length} 道追问（${this.pending.kind}），送设备作答`)
       this.#sendQuestion(0)
     })
@@ -453,6 +547,7 @@ export class QuestionsDomain {
     }
 
     this.logger('debug', `[questions] 设备分支结束（${reason}）`)
+    this.#setQuestionState(null)
     pending.settle(null)
     this.broadcast({ type: 'question.updated', question: null })
   }
@@ -468,6 +563,7 @@ export class QuestionsDomain {
     // ★ 计时追问的补答：收尾由投递结果决定（成功 = continued-answered），
     //   这里不能先发 done —— 否则设备会先显示"已提交"，而投递可能失败。
     if (!pending.continued) this.#sendDone(pending.callId, true, 'submitted')
+    this.#setQuestionState(null)
     pending.settle({ kind: 'answer', value, from: 'device', callId: pending.callId })
     this.broadcast({ type: 'question.updated', question: null })
   }
@@ -480,7 +576,30 @@ export class QuestionsDomain {
     if (pending.timer) clearTimeout(pending.timer)
     this.pending = null
     this.logger('info', `[questions] 设备「要求修改」：拒绝等待（ASK_CANCELLED）批 ${pending.callId}`)
+    this.#setQuestionState(null)
     pending.settle({ kind: 'reject', error })
+    this.broadcast({ type: 'question.updated', question: null })
+  }
+
+  /** 工具批次提交：把设备回的标签文本反查成选项下标。 */
+  #settleToolAnswer(pending) {
+    if (pending.settled) return
+    pending.settled = true
+    if (pending.timer) clearTimeout(pending.timer)
+    if (pending.abortTimer) clearTimeout(pending.abortTimer)
+    this.pending = null
+
+    const pick = pending.picks.get(pending.questions[0].id)
+      ?? { selected: [], custom: '', skipped: false }
+    const label = pick.selected[pick.selected.length - 1] ?? ''
+    const index = pending.optionLabels.indexOf(label)
+    const custom = String(pick.custom ?? '').slice(0, 200)
+
+    this.#sendDone(pending.callId, true, 'submitted')
+    this.#setQuestionState(null)
+    // 跳过 / 既没选也没填自定义文本 = 没作答；只有自定义文本时 index 记 -1。
+    if (pick.skipped || (index < 0 && !custom)) pending.settle(null)
+    else pending.settle({ index, label, custom })
     this.broadcast({ type: 'question.updated', question: null })
   }
 
@@ -532,6 +651,11 @@ export class QuestionsDomain {
       return
     }
     if (action === 'reject') {
+      if (pending.source === 'tool') {
+        // 工具提问没有计划评审语义：按「用户取消」收尾，设备已自行收页。
+        this.#cancelDevice('user-reject')
+        return
+      }
       // 「要求修改」（计划评审）：拒绝等待本身（ASK_CANCELLED），
       // 用户回来在输入框里写修改意见 —— 与官方卡片的 Request changes 同语义。
       this.#settleDeviceReject(rejectedQuestionError('the user requested changes to the plan'))
@@ -539,6 +663,11 @@ export class QuestionsDomain {
     }
     if (action !== 'submit') {
       this.logger('warn', `[questions] 未知的 question.answer action=${action}`)
+      return
+    }
+    if (pending.source === 'tool') {
+      // 工具批次不组 DSH 的 answers 数组，只把「选中文本 → 下标」交回去。
+      this.#settleToolAnswer(pending)
       return
     }
 
@@ -594,7 +723,10 @@ export class QuestionsDomain {
         .slice(0, BUDGET.maxOptions)
         .map((option) => clampText(option.label, BUDGET.optionLabelChars).replaceAll('|', '/'))
         .join('|'),
-      recommendedIndex: Math.max(0, question.options.findIndex((option) => option.recommended)),
+      // findIndex 无推荐时是 -1，设备端按"不预选"处理；不要 Math.max(0, …)：
+      // 那会把「没有推荐项」写成 0，设备永远把第一项预选成草稿，custom-only
+      // 的答案里就混进一个用户没选过的选项（真机 B6 暴露）。
+      recommendedIndex: question.options.findIndex((option) => option.recommended),
       hasCustom: 1,
       timeoutMs: Math.max(0, pending.timeoutMs - (Date.now() - pending.startedAt)),
     }

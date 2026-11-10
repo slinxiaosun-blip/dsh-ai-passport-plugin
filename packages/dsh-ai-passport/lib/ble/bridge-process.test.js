@@ -209,3 +209,57 @@ test('spawn 失败被转成可读错误，不抛裸异常', async () => {
   assert.equal(settled, true)
   await transport.dispose()
 })
+
+test('★ init 失败后丢弃子进程：不会永久复用一个"活着但不干活"的桥进程', async () => {
+  // 回归用例：旧实现只把 init 的错误抛出去，`this.child` 还留着、exitCode 仍是 null，
+  // 下一次 #ensureChild 看到"进程还活着"就直接返回 —— 之后每条命令都要等满 15s
+  // 的 ready 超时，用户只能重启 DSH 才有救。
+  const fs = await import('node:fs/promises')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const workerPath = path.join(os.tmpdir(), `ap-bad-worker-${process.pid}-${Date.now()}.js`)
+  // 起来就退出：复刻"进程在，但 init 永远不答话"
+  await fs.writeFile(workerPath, 'process.exit(3)\n')
+
+  const transport = new BridgeProcessTransport({ workerPath })
+  try {
+    await assert.rejects(() => transport.startScan(), 'init 失败必须抛出可读错误')
+    assert.equal(transport.child, null, 'init 失败必须清掉子进程句柄，否则下次会复用它')
+  } finally {
+    await transport.dispose()
+    await fs.rm(workerPath, { force: true })
+  }
+})
+
+test('★ dispose() 取消待执行的重启：卸载后不会再凭空冒出一个子进程', async () => {
+  // 回归用例：旧实现把重启定时器丢在局部变量里，dispose 无从取消。
+  // 插件卸载 500ms 后仍会 spawn 一个新的桥进程 —— 没人管、还占着 BLE 适配器。
+  const fs = await import('node:fs/promises')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const workerPath = path.join(os.tmpdir(), `ap-bad-worker-${process.pid}-${Date.now()}.js`)
+  await fs.writeFile(workerPath, 'process.exit(3)\n')
+
+  const logs = []
+  const transport = new BridgeProcessTransport({
+    workerPath,
+    logger: (_level, message) => logs.push(String(message)),
+  })
+
+  try {
+    await assert.rejects(() => transport.startScan())
+    // 此时 exit 处理器已经排了一个 500ms 之后的重启
+    assert.ok(transport.restartTimer, '失败后应当排上重启（这是期望行为）')
+
+    await transport.dispose()
+    assert.equal(transport.restartTimer, null, 'dispose 必须取消待执行的重启')
+
+    const spawnsBefore = logs.filter((m) => m.includes('启动')).length
+    await new Promise((r) => setTimeout(r, 800))
+    const spawnsAfter = logs.filter((m) => m.includes('启动')).length
+    assert.equal(spawnsAfter, spawnsBefore, 'dispose 之后不应该再启动新的桥进程')
+    assert.equal(transport.child, null)
+  } finally {
+    await fs.rm(workerPath, { force: true })
+  }
+})

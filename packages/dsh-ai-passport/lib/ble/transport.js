@@ -173,8 +173,16 @@ export class Transport extends EventEmitter {
     }
   }
 
-  /** 主动断开。 */
-  async disconnect(reason = 'user') {
+  /**
+   * 主动断开。
+   *
+   * @param {string} reason 断开归因
+   * @param {object} [options]
+   * @param {boolean} [options.unexpected] 标记为"意外掉线"，让上层按重连路径处理。
+   *   主机心跳判死属于这类：链路确实是主机主动杀的，但对用户而言就是掉线，
+   *   必须触发自动重连（否则会永久停在离线，只能手动点连接）。
+   */
+  async disconnect(reason = 'user', options = {}) {
     try {
       await this.doDisconnect()
     } catch (error) {
@@ -183,7 +191,7 @@ export class Transport extends EventEmitter {
       if (this.state !== LINK_STATE.FAILED) this.#setState(LINK_STATE.IDLE)
       const previous = this.device
       this.device = null
-      this.emit('disconnect', { reason, device: previous })
+      this.emit('disconnect', { reason, device: previous, unexpected: Boolean(options.unexpected) })
     }
   }
 

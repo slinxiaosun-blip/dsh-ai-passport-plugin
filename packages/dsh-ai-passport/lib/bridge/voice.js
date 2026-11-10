@@ -26,6 +26,19 @@ import { fileURLToPath } from 'node:url'
 /** PTT 最短说话时长（秒）：短于它视为误碰，静默丢弃不进转写。 */
 const MIN_TALK_SECONDS = 0.5
 
+/**
+ * 语音识别未启用时的统一提示。
+ *
+ * 识别**只用 DSH 自带的语音输入**（`ctx.speechToText` + 官方
+ * `@deepseek-ai/dsh-experimental-voice-input-bundle`），插件不再自带任何 ASR。
+ * 未启用时要把"去哪儿开"说清楚 —— 只说"未启用"用户不知道下一步做什么。
+ */
+const SPEECH_DISABLED_HINT =
+  'DSH 自带的语音输入未启用：请在「设置 → 插件」启用「语音输入」（本地 SenseVoice），再按住设备说话。'
+const SPEECH_NO_PROVIDER_HINT =
+  'DSH 自带的语音输入没有可用的识别提供者：请启用「语音输入」并完成模型准备（首次约 240MB）。'
+
+
 /** 插件包根目录（lib/bridge/voice.js → 上两级）。 */
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -578,7 +591,7 @@ export class VoiceDomain {
     if (!speech) {
       if (!quiet) {
         this.domainState.speech = null
-        this.domainState.speechError = '当前 DSH 没有启用语音识别服务（ctx.speechToText 不存在）'
+        this.domainState.speechError = SPEECH_DISABLED_HINT
         this.broadcast({ type: 'speech.error', message: this.domainState.speechError })
       }
       return null
@@ -587,7 +600,7 @@ export class VoiceDomain {
       const snapshot = speech.snapshot()
       const providers = Array.isArray(snapshot?.providers) ? snapshot.providers : []
       const selectedId = snapshot?.selection?.providerId ?? null
-      const selected = providers.find((provider) => provider.id === selectedId) ?? providers[0] ?? null
+      const selected = this.#pickProvider(providers, selectedId)
 
       // ★ ready 的语义：DSH 在推理时接受 **ready 或 standby**（asar 原文：
       //   "At execution, the worker requires ready or standby resources"）。
@@ -610,9 +623,7 @@ export class VoiceDomain {
         providerCount: providers.length,
       }
       this.domainState.speech = info
-      this.domainState.speechError = providers.length === 0
-        ? '没有可用的识别提供者。请在 DSH 里启用本地语音识别（SenseVoice）或安装一个识别插件。'
-        : null
+      this.domainState.speechError = providers.length === 0 ? SPEECH_NO_PROVIDER_HINT : null
       this.broadcast({ type: 'speech.updated', speech: info })
       return info
     } catch (error) {
@@ -653,13 +664,36 @@ export class VoiceDomain {
     attempt(0)
   }
 
+  /**
+   * 选识别提供者：**优先 DSH 自带的本地语音输入**。
+   *
+   * 配置里显式指定 providerId 时以配置为准；否则优先 host-local 的提供者
+   * （官方 voice-input bundle 注册的 SenseVoice），再退回 registry 的默认选择。
+   * 这样即使用户另装了第三方识别插件，设备语音仍走自带的离线识别。
+   * @param {Array<{id:string, location?:string}>} providers
+   * @param {string|null} selectedId registry 当前选择
+   */
+  #pickProvider(providers, selectedId) {
+    if (!Array.isArray(providers) || providers.length === 0) return null
+    const configured = String(this.config?.voice?.providerId ?? '').trim()
+    if (configured) {
+      const hit = providers.find((provider) => provider.id === configured)
+      if (hit) return hit
+    }
+    const builtin = providers.find(
+      (provider) => provider.location === 'host-local' || provider.id === 'sensevoice-local',
+    )
+    if (builtin) return builtin
+    return providers.find((provider) => provider.id === selectedId) ?? providers[0]
+  }
+
   /** 触发模型准备（SenseVoice 首次会下载约 240MB）。 */
   async prepare() {
     const speech = this.#speechService()
-    if (!speech) throw new Error('当前 DSH 没有启用语音识别服务')
+    if (!speech) throw new Error(SPEECH_DISABLED_HINT)
     const catalog = await this.refreshCatalog()
     const providerId = this.config.voice.providerId || catalog?.providerId
-    if (!providerId) throw new Error('没有可用的识别提供者')
+    if (!providerId) throw new Error(SPEECH_NO_PROVIDER_HINT)
     speech.prepare(providerId, {})
     this.logger('info', `[voice] 已请求准备识别模型：${providerId}`)
     return { providerId }
@@ -699,10 +733,12 @@ export class VoiceDomain {
 
   async #transcribe(wav, format) {
     const speech = this.#speechService()
-    if (!speech) throw new Error('当前 DSH 没有启用语音识别服务（ctx.speechToText 不存在）')
+    if (!speech) throw new Error(SPEECH_DISABLED_HINT)
 
     const request = { audio: wav.bytes, language: this.config.voice.language }
-    if (this.config.voice.providerId) request.providerId = this.config.voice.providerId
+    // 显式配置优先；否则用最近一次目录探测选中的提供者（#pickProvider 已优先自带 SenseVoice）。
+    const providerId = this.config.voice.providerId || this.domainState.speech?.providerId
+    if (providerId) request.providerId = providerId
 
     const spec = speech.resolve(request)
     const transcript = await speech.transcribe(spec, AbortSignal.timeout(60_000))

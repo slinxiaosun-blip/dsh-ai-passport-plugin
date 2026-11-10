@@ -96,8 +96,19 @@ export class StateDomain {
     this.runStarts = new Map()
     /** 当前是否有审批挂起（由 ApprovalDomain 通过 setApproval 告知）。 */
     this.approvalTitle = null
+    /**
+     * 当前是否有**追问/选择**挂在设备上等作答（由 QuestionsDomain 通过 setQuestion 告知）。
+     * 与审批同级：都要用户在设备上动手，状态卡大字显示「待回答」。
+     */
+    this.questionTitle = null
     /** 最近一次结束的会话标题，用于「已完成」状态下的补充说明。 */
     this.lastCompletedTitle = ''
+    /**
+     * 刚结束任务的**最终用时**（毫秒），用于「已完成」卡片在计时位置显示静态时长。
+     * -1 = 没有可信基准（起点缺失/不可靠），设备端宁可不显示也不猜。
+     * 在 turn/end 里于 running 删除**之前**取 `#elapsed()`；turn/start 时清空。
+     */
+    this.lastCompletedElapsedMs = -1
     /** 「已完成」状态的到期时间戳。 */
     this.completedUntil = 0
     this.completedTimer = null
@@ -122,6 +133,19 @@ export class StateDomain {
     // 首次连上时把当前状态补推一次：设备可能在链路建立前就已就绪，
     // 若此时没有任何状态变化，它会一直停在默认的「空闲」。
     this.push({ force: true })
+  }
+
+  /**
+   * 域生命周期收尾。
+   *
+   * ★ 之前**没有这个方法**，而 runtime.dispose() 会逐个调 domain.dispose()：
+   *   StateDomain 只是"没有可调的东西"被默默跳过 —— 它对 `ctx.on('session/event')`
+   *   的订阅因此永远不退订。插件卸载/重载一次就多一套监听器，同一轮对话会把
+   *   task.state 往设备推两遍、三遍（HMR 调试时尤其明显，且不会报错）。
+   *   真正的清理逻辑早就在 detach() 里，这里只是把它接到框架约定的入口上。
+   */
+  async dispose() {
+    this.detach()
   }
 
   detach() {
@@ -203,12 +227,17 @@ export class StateDomain {
         // 真实起点：这条事件只在轮次真正开始时发，可靠。
         this.#markStart(sessionId, true)
         this.lastCompletedTitle = ''
+        this.lastCompletedElapsedMs = -1
         this.push()
         break
       case 'turn/end': {
         this.#traceTurn('turn/end', sessionId)
+        // ★ 在 running 删除之前取一次最终用时：删掉就没有起点基准了。
+        //   （#elapsed() 依赖 runStarts 里最早那个起点。）
+        const finished = this.#elapsed()
         this.running.delete(sessionId)
         this.runStarts.delete(sessionId)
+        if (finished.elapsedMs != null) this.lastCompletedElapsedMs = finished.elapsedMs
         // 记下刚结束的会话标题，让「已完成」那一行能说清是哪个任务。
         // 标题可能出现在三个位置：事件里的 session 快照、projections、或只有 id
         // （此时退回会话控制器查一次）。DSH 各版本给的事件形状不完全一致，
@@ -265,6 +294,20 @@ export class StateDomain {
     const next = title ? String(title).slice(0, 32) : null
     if (this.approvalTitle === next) return
     this.approvalTitle = next
+    this.push()
+  }
+
+  /**
+   * 设备上是否有一批追问在等作答。
+   *
+   * 与 setApproval 同一套推送模型：QuestionsDomain 在 pending 建立时调
+   * `setQuestion(题干)`、结算/取消时调 `setQuestion(null)`。
+   * 状态优先级：待审批 > 待回答 > 运行中（审批与追问都把 agent 卡住等用户）。
+   */
+  setQuestion(title) {
+    const next = title ? String(title).slice(0, 32) : null
+    if (this.questionTitle === next) return
+    this.questionTitle = next
     this.push()
   }
 
@@ -414,6 +457,9 @@ export class StateDomain {
     if (this.approvalTitle) {
       return { state: TASK_STATE.WAITING_APPROVAL, title: this.approvalTitle }
     }
+    if (this.questionTitle) {
+      return { state: TASK_STATE.WAITING_QUESTION, title: this.questionTitle }
+    }
     if (this.running.size > 0) {
       const { elapsedMs, sinceReliable } = this.#elapsed()
       // 待审批时不计时显示（审批页有自己的内容），但锚点保留：
@@ -421,7 +467,12 @@ export class StateDomain {
       return { state: TASK_STATE.RUNNING, title: `${this.running.size} 个任务执行中`, elapsedMs, sinceReliable }
     }
     if (Date.now() < this.completedUntil) {
-      return { state: TASK_STATE.COMPLETED, title: this.lastCompletedTitle || '任务刚刚结束' }
+      return {
+        state: TASK_STATE.COMPLETED,
+        title: this.lastCompletedTitle || '任务刚刚结束',
+        // 最终用时：设备在「已完成」下静态显示，不再走秒（用户要求）。
+        elapsedMs: this.lastCompletedElapsedMs >= 0 ? this.lastCompletedElapsedMs : null,
+      }
     }
     return { state: TASK_STATE.IDLE, title: '' }
   }

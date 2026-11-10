@@ -53,6 +53,16 @@ export class BridgeProcessTransport extends Transport {
     this.nextRequestId = 1
     this.readLine = null
     this.restartAttempt = 0
+    /**
+     * 待执行的重启定时器。
+     *
+     * ★ 之前 #scheduleRestart 只把 setTimeout 的句柄丢在局部变量里，dispose 时无从
+     *   取消：卸载插件后这个定时器仍会到点，重新 spawn 一个桥进程 —— 一个**没人管**
+     *   的子进程，并且会一直占着 BLE 适配器，下次启动插件反而连不上。
+     */
+    this.restartTimer = null
+    /** 并发去重：startScan 与 connect 同时到达时只能 spawn 一个子进程。 */
+    this.ensurePromise = null
     this.disposed = false
     this.intentionalStop = false
     /** 桥进程上报的 noble 实现名，用于诊断显示。 */
@@ -111,8 +121,25 @@ export class BridgeProcessTransport extends Transport {
   // —— 子进程生命周期 ——
 
   async #ensureChild() {
+    if (this.disposed) {
+      throw new TransportError(TRANSPORT_ERROR.NOT_AVAILABLE, '传输已关闭，无法启动桥进程')
+    }
     if (this.child && !this.child.killed && this.child.exitCode === null) return
+    // 并发去重：startScan() 与 connect() 可能同时到达。各 spawn 一个子进程会互相
+    // 踩 —— 两个进程抢同一个 BLE 适配器，后到的那个必然失败，且留下多余进程。
+    if (this.ensurePromise) return this.ensurePromise
 
+    const task = this.#spawnAndInit()
+    this.ensurePromise = task
+    try {
+      return await task
+    } finally {
+      if (this.ensurePromise === task) this.ensurePromise = null
+    }
+  }
+
+  /** 真正 spawn + init 的那一半（由 #ensureChild 做去重与 disposed 判定）。 */
+  async #spawnAndInit() {
     const args = [this.workerPath]
     if (this.mock) args.push('--mock')
 
@@ -147,6 +174,9 @@ export class BridgeProcessTransport extends Transport {
       )
       this.lastBridgeError = { cmd: 'spawn', code: wrapped.code, message: wrapped.message }
       this.#failAllPending(wrapped)
+      // 已经卸载了就别再往上抛事件：监听者可能已经全部拆掉，
+      // 在别人的 effect 清理路径上 emit 只会制造一条无主告警。
+      if (this.disposed) return
       this.emit('error', wrapped)
     })
 
@@ -162,28 +192,71 @@ export class BridgeProcessTransport extends Transport {
       this.#failAllPending(error)
       // 正在收尾时子进程退出是预期行为，不是掉线：此时既不该改写链路状态，
       // 也不该触发重连，否则 dispose() 之后还会凭空冒出一个新子进程。
-      if (this.disposed || this.intentionalStop) return
+      // discarded 同理 —— 那是 init 失败后我们自己杀掉的，重拉只会再失败一次。
+      if (this.disposed || this.intentionalStop || child.__discarded) return
       if (this.state === 'connected') {
         this.emitUnexpectedDisconnect('bridge-exited', error)
       }
       this.#scheduleRestart()
     })
 
-    await this.#request('init')
+    try {
+      await this.#request('init')
+    } catch (error) {
+      // ★ init 失败必须销毁这个子进程并清掉句柄。
+      //   旧代码只是把错误抛出去：`this.child` 还在、exitCode 仍是 null，
+      //   下一次 #ensureChild 看到"进程还活着"就直接返回 —— 等于永久复用
+      //   一个拒绝服务的桥进程，用户只能重启 DSH 才有救。
+      this.#discardChild(child, error)
+      throw error
+    }
+  }
+
+  /** 丢弃一个不可用的子进程（init 失败 / 协议不通），保证下次能重新拉起。 */
+  #discardChild(child, reason) {
+    child.__discarded = true
+    // 只在"它仍然是当前子进程"时才动实例字段：万一期间已经拉起了新的子进程，
+    // 把 this.readLine 关掉等于把新进程的 stdout 掐了。
+    if (this.child === child) {
+      this.child = null
+      this.childReady = false
+      try {
+        this.readLine?.close()
+      } catch {
+        // 已经关了
+      }
+      this.readLine = null
+    }
+    this.#flushReadyWaiters(reason instanceof Error ? reason : new Error(String(reason ?? '桥进程已丢弃')))
+    if (child.exitCode === null) {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        // 已经退出
+      }
+    }
   }
 
   #scheduleRestart() {
+    // 已经卸载 / 已经排了一个重启：都不要再造定时器。
+    if (this.disposed || this.restartTimer) return
     const delay = RESTART_BACKOFF_MS[Math.min(this.restartAttempt, RESTART_BACKOFF_MS.length - 1)]
     this.restartAttempt += 1
     this.logger('info', `[bridge] ${delay}ms 后重启桥进程（第 ${this.restartAttempt} 次）`)
-    const timer = setTimeout(() => {
-      timer.unref?.()
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null
+      if (this.disposed) return
       void this.#ensureChild().catch((error) => {
         this.logger('error', `[bridge] 重启失败：${error.message}`)
         this.#scheduleRestart()
       })
     }, delay)
-    timer.unref?.()
+    this.restartTimer.unref?.()
+  }
+
+  #clearRestartTimer() {
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.restartTimer = null
   }
 
   #failAllPending(error) {
@@ -232,6 +305,9 @@ export class BridgeProcessTransport extends Transport {
     switch (message.event) {
       case 'ready':
         this.childReady = true
+        // ★ 重启成功后复位退避计数：否则连续几次崩溃后即使桥进程已稳定，
+        //   后续每次重启都要等满 10s —— 面板上就是"断了很久才回来"。
+        this.restartAttempt = 0
         this.logger('debug', `[bridge] ready pid=${message.pid} mock=${message.mock}`)
         this.#flushReadyWaiters(null)
         break
@@ -397,6 +473,8 @@ export class BridgeProcessTransport extends Transport {
   async doDispose() {
     this.disposed = true
     this.intentionalStop = true
+    // 先掐掉待执行的重启：晚一步就会在卸载之后又拉起一个无人看管的子进程。
+    this.#clearRestartTimer()
     if (this.child) {
       await this.#request('dispose', {}, 3000).catch(() => {})
       // 给它一点时间自己退出；不退就杀掉，不留孤儿进程。
@@ -410,6 +488,9 @@ export class BridgeProcessTransport extends Transport {
       }
     }
     this.#failAllPending(new TransportError(TRANSPORT_ERROR.NOT_AVAILABLE, '传输已关闭'))
+    // 还有人在 waitForReady 上挂着的话也要唤醒：否则它们的 await 永远不返回，
+    // 卸载流程会卡在最后一步（node --test 下表现为整份用例 cancelled）。
+    this.#flushReadyWaiters(new TransportError(TRANSPORT_ERROR.NOT_AVAILABLE, '传输已关闭'))
   }
 }
 

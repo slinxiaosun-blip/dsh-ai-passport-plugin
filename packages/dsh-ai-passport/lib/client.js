@@ -41,7 +41,8 @@ window.__ModuleLoader__.load({
 .ap-dot[data-state="running"]{background:#4d6bfe;animation:ap-pulse 1.2s ease-in-out infinite}
 @keyframes ap-pulse{0%,100%{opacity:1}50%{opacity:.35}}
 .ap-badge{min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#dc2626;color:#fff;font-size:10px;font-weight:600;display:inline-flex;align-items:center;justify-content:center}
-.ap-pop{position:absolute;bottom:calc(100% + 8px);right:var(--ap-pop-x, 24px);left:auto;width:180px;max-width:min(180px, calc(100vw - 24px));max-height:420px;overflow-y:auto;z-index:60;padding:12px;border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.28));border-radius:12px;background:var(--dsw-alias-bg-layer-1, #fff);box-shadow:0 8px 28px rgba(0,0,0,.16);font-size:12px;color:var(--dsw-alias-text-l1, inherit)}
+/* 弹层锚在挂件左侧（input.left 在工具栏最左侧），向右展开，避免出血到屏幕外。 */
+.ap-pop{position:absolute;bottom:calc(100% + 8px);left:0;right:auto;width:180px;max-width:min(180px, calc(100vw - 24px));max-height:420px;overflow-y:auto;z-index:60;padding:12px;border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.28));border-radius:12px;background:var(--dsw-alias-bg-layer-1, #fff);box-shadow:0 8px 28px rgba(0,0,0,.16);font-size:12px;color:var(--dsw-alias-text-l1, inherit)}
 .ap-sect{margin-bottom:12px}
 .ap-sect:last-child{margin-bottom:0}
 .ap-h{display:flex;align-items:center;justify-content:flex-start;gap:8px;margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--dsw-alias-text-l3, #6b7280);text-transform:uppercase}
@@ -555,14 +556,18 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       ctx.effect(() => {
-        ctx.slots.inject('conversation.input.activity', () =>
+        // ★ 用输入框工具栏左侧的 **list** 槽位，而不是 `conversation.input.activity`：
+        //   后者是 single 槽位，官方语音输入插件也注册在那里。两端同时启用时，
+        //   谁第二个注册谁抛错 —— 表现为 `web boot: 1 entry did not activate`
+        //   （@deepseek-ai/dsh-experimental-client-ui-voice-input: failed），
+        //   桌面端启动失败自愈还会把整个 profile 的 bundles 重置掉。
+        //   input.left 是 list 槽位，提供同样的 inputActions/useInput，可与官方语音并存。
+        ctx.slots.inject('conversation.input.left', () =>
           ctx.slots.register(
             {
-              name: 'conversation.input.activity',
-              // 放在模型选择器之后、提交按钮之前，与官方语音输入并排
+              name: 'conversation.input.left',
+              id: 'dsh-ai-passport',
               order: 40,
-              locale: NS,
-              inject: () => ({}),
             },
             PassportWidget,
           ),

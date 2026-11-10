@@ -95,7 +95,14 @@ function applyUnsafe(root, rawConfig) {
   root.effect(() => () => {
     for (const dispose of disposers.reverse()) {
       try {
-        dispose()
+        const returned = dispose()
+        // ★ 有的清理项是异步的（runtime.dispose → 域收尾 → link.dispose）。
+        //   这里不接住返回的 Promise，卸载期任何一次失败都会变成
+        //   unhandledRejection —— Node 24 默认把它当致命错误，表现成
+        //   "关掉插件反而把宿主带崩"。补一个 catch，让卸载永远安静。
+        if (returned && typeof returned.then === 'function') {
+          returned.catch((error) => logger('warn', `[passport] 异步清理失败：${error?.message ?? error}`))
+        }
       } catch (error) {
         logger('warn', `[passport] 清理时出错：${error?.message ?? error}`)
       }
@@ -228,12 +235,16 @@ export function createRuntime({ config, logger }) {
 
   const domains = []
   const shared = { link, config, logger, broadcast, domainState, domains }
+  /** 单飞令牌：同一时刻只允许一次"扫描并连接"在飞（见 runtime.connect）。 */
+  let connectPromise = null
 
   const state = new StateDomain(shared)
   const balance = new BalanceDomain(shared)
   const approval = new ApprovalDomain(shared)
   const voice = new VoiceDomain(shared)
   const questions = new QuestionsDomain(shared)
+  // 追问挂起时让状态卡显示「待回答」（与「待审批」同级）
+  questions.stateDomain = state
   // 配对（阶段 C）：信任表落在 ~/.dsh/dsh-ai-passport.pairing.json（与插件日志同目录）
   // 信任表路径：插件沙箱里没有顶层 node:os，按本文件既有的 getBuiltinModule 取法
   const pairingStorePath = (() => {
@@ -355,20 +366,36 @@ export function createRuntime({ config, logger }) {
     /** 扫描并连接（面板「扫描并连接」按钮与自动连接都走这里）。 */
     async connect() {
       if (link.state === 'connected') return { state: link.state }
-      try {
-        await link.start()
-        return { state: link.state }
-      } catch (error) {
-        // 之前这里"点了没反应"的根源之一：错误被吞掉，界面无从显示。
-        // 现在把可读原因一并回给面板，并明确区分"权限/适配器/设备"三类。
-        const hint = error?.hint ? ` —— ${error.hint}` : ''
-        logger('warn', `[passport] 连接失败：${error?.message ?? error}${hint}`)
-        return {
-          state: link.state,
-          message: `${error?.message ?? '连接失败'}${hint}`,
-          error: { code: error?.code ?? 'unknown', message: error?.message ?? String(error), hint: error?.hint },
-          state_: snapshot(),
+      // ★ 单飞：面板连点两下、自动连接与手动连接同时触发时，第二次 start()
+      //   会在已经在 scanning 的状态下再要一次 startScan —— 底层要么报
+      //   "already scanning"、要么把扫描重置，真机表现就是"点两下反而连不上"。
+      //   并发调用直接复用同一个 Promise，两条路径拿到同一份结果。
+      if (connectPromise) return connectPromise
+
+      const task = (async () => {
+        try {
+          await link.start()
+          return { state: link.state }
+        } catch (error) {
+          // 之前这里"点了没反应"的根源之一：错误被吞掉，界面无从显示。
+          // 现在把可读原因一并回给面板，并明确区分"权限/适配器/设备"三类。
+          const hint = error?.hint ? ` —— ${error.hint}` : ''
+          logger('warn', `[passport] 连接失败：${error?.message ?? error}${hint}`)
+          return {
+            state: link.state,
+            message: `${error?.message ?? '连接失败'}${hint}`,
+            error: { code: error?.code ?? 'unknown', message: error?.message ?? String(error), hint: error?.hint },
+            state_: snapshot(),
+          }
         }
+      })()
+
+      connectPromise = task
+      try {
+        return await task
+      } finally {
+        // 只有仍是自己这一单才清：避免把后来者的令牌误清掉。
+        if (connectPromise === task) connectPromise = null
       }
     },
 
@@ -474,15 +501,28 @@ export function createRuntime({ config, logger }) {
 
     /** 关闭：先让业务域收尾，再断链路（域可能需要发最后一条消息）。 */
     async dispose() {
+      // 幂等：apply() 可能被重复调用，disposers 里也可能排进不止一条清理项。
+      // 重复 dispose 会让各域把"已经清过的东西"再清一遍，且会让 link.dispose()
+      // 在已经拆掉的传输上再等一轮超时（卸载变慢几十秒）。
+      if (runtime.isDisposed) return
+      runtime.isDisposed = true
+
       for (const domain of domains) {
         try {
-          await domain.dispose()
+          await domain.dispose?.()
         } catch (error) {
+          // 单个域收尾失败不能连累其余域与链路。
           logger('debug', `[passport] 域收尾失败：${error?.message ?? error}`)
         }
       }
       listeners.clear()
-      await link.dispose()
+      // 链路收尾同样兜底：这里抛错会让上层 disposer 只看到一条 warn，
+      // 但子进程可能因此留着不退（真正会拖住宿主退出的是这个）。
+      try {
+        await link.dispose()
+      } catch (error) {
+        logger('warn', `[passport] 链路收尾失败：${error?.message ?? error}`)
+      }
     },
   }
 

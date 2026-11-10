@@ -108,7 +108,10 @@ test('启动探测：服务始终不存在时，最后一次尝试正常发布�
   const { domain, domainState } = makeDomain({ speechToText: undefined })
   domain.startInitialCatalogProbe([5, 20])
   await wait(60)
-  assert.match(String(domainState.speechError ?? ''), /没有启用语音识别服务/)
+  assert.match(String(domainState.speechError ?? ''), /DSH 自带的语音输入未启用/)
+  // 提示必须可操作：只说"未启用"用户不知道去哪儿开
+  assert.match(String(domainState.speechError ?? ''), /设置 → 插件/)
+  assert.match(String(domainState.speechError ?? ''), /语音输入/)
   await domain.dispose()
 })
 

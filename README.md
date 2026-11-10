@@ -71,7 +71,8 @@ git clone -b feature/dsh-passport \
 
 ## 快速开始
 
-前置：DSH 桌面版（macOS 或 Windows）、Node ≥ 20。BLE 走 noble 原生后端：
+前置：DSH 桌面版（macOS 或 Windows）、Node ≥ 22（DSH `0.2.2-rc.1` 自身要求 ≥ 24.9.0，
+桌面版自带该运行时）。BLE 走 noble 原生后端：
 macOS 限 Apple Silicon；Windows 需 Windows 10 1703+（x64，noble 有 win32-x64 预编译；
 ARM64 需源码编译，见 [docs/08](docs/08-Windows反馈清单.md)）。
 
@@ -119,21 +120,35 @@ http://127.0.0.1:19387/dsh-passport
 
 ## 版本与兼容性
 
-当前实测环境（2026-10-31）：
+当前实测环境（2026-11-08）：
 
 | 组件 | 版本 | 说明 |
 | --- | --- | --- |
-| DSH 桌面版 | `0.2.1-rc.5` | 插件 API 基线，开发时以它为准；macOS 与 Windows 同一份插件代码 |
+| DSH 桌面版 | `0.2.2-rc.1` | 插件 API 基线，开发时以它为准；`0.2.1-rc.5` 亦兼容（两版 `tools.register` 都强制要求 `output`） |
 | dsh CLI | `0.2.0-rc.2` | `dsh --version` 实测；`@deepseek-ai/dsh` 全局安装 |
 | dsh-tui | launcher `0.14.0` / profile `0.17.0` | `dsh-tui --version` 实测，profile 目录 `~/.dsh/profiles/dsh-tui` |
-| 插件（本仓） | `1.3.1` | `packages/dsh-ai-passport/package.json` |
-| 设备固件 | `1.3.1` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
+| 插件（本仓） | `1.4.0` | `packages/dsh-ai-passport/package.json` |
+| 设备固件 | `1.4.0` + git 短哈希 | 固件仓 `version.txt`，构建期自动追加 `git describe` |
 | BLE 协议 | `v1` | 双端常量 `PROTOCOL_VERSION` ↔ `AP_PROTOCOL_VERSION`，取较小值运行 |
 | 固件基线 | `main @ 0b9e4c8` | 上游 [FoloToy/ai-passport](https://github.com/FoloToy/ai-passport) |
-| Node | ≥ 20 | 开发机 `v22.22.2`；桌面版自带 Node（`Contents/Resources/runtime/bin/node`，版本随 App 走） |
+| Node | ≥ 22（插件自身）；DSH `0.2.2-rc.1` 要求 ≥ 24.9.0 | 开发机 `v22.22.2` 跑 `npm test` 全绿；桌面版自带 Node（`Contents/Resources/runtime/bin/node`，版本随 App 走） |
 | 操作系统 | macOS（Apple Silicon）/ Windows 10 1703+ | BLE 后端：CoreBluetooth / WinRT（noble）；固件一次烧录两端通用 |
 
 版本记录：
+
+- `1.4.0` —— **语音交互与状态卡整轮打磨**：
+  - 语音识别改走 **DSH 自带语音输入**（`ctx.speechToText`，官方 voice-input bundle），
+    优先 `host-local` / SenseVoice；未启用时在挂件、面板给出可操作提示；插件不再自带 ASR。
+  - 追问「其他」交互重做：**单击提交、长按录音**；识别结果改为**独立结果页**
+    （单击填入 / 长按提交 / 上键重录 / **下键翻页**），语音页只显示录音状态、不回显文字。
+  - 状态卡：按用户要求**不再单独显示「待审批 / 待回答」**（统一显示「运行中」，
+    内部仍用于亮屏、优先级与不休眠）；运行计时移到任务提示下方居中，
+    **任务完成后在该位置静态显示最终用时**。
+  - 追问默认**不再超时**（`questions.timeoutMs=0`），审批仍默认不超时。
+  - 设置页新增「按键音」开关（音量沿用提示音量）；长选项选中行跑马灯滚动。
+  - 蓝牙：断开时复位 hello 标志，且 `hello.ack` 同时携带固件/电量，
+    修复重连后面板固件与电量一直显示「—」。
+  - 固件 `1.4.0` 同步，协议 v1 不变。
 
 - `1.3.1` —— **状态卡重排 + 计时放大**：按用户要求"信息居中"，状态灯与 40px 状态大字改为
   一个横排容器整组水平居中（大字宽度随状态词变，灯跟着一起挪），提示行同一条中线居中；
@@ -154,11 +169,11 @@ http://127.0.0.1:19387/dsh-passport
 - `1.0.0` —— 阶段 A/B/C 全功能首个版本（任务台/审批/余额/语音/配对）。
 
 > 设备固件见 [ai-passport-dsh releases](https://github.com/slinxiaosun-blip/ai-passport-dsh/releases)：
-> `1.3.1`（状态卡改为信息居中、运行计时放大到 28px；含 1.3.0 的状态条四元素统一 16px 思源）。
+> `1.4.0`（语音结果独立页 + 下键翻页、状态卡与设置项调整；重连后固件/电量可靠上报）。
 > 协议 v1 未变，固件与插件可独立升级。
 
 > 插件依赖 DSH `0.2.x` 的 `ctx.webServer` / `speechToText` / `deepseekAccount`
-> 等宿主 API（实测基线 `0.2.1-rc.5`）。DSH 升级前先跑 `npm test`（mock 联调）+
+> 等宿主 API（当前基线 `0.2.2-rc.1`，`0.2.1-rc.5` 亦兼容）。DSH 升级前先跑 `npm test`（mock 联调）+
 > [docs/07](docs/07-设备端验收用例.md) 真机验收，通过再升级。
 
 ## 目录结构

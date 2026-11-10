@@ -152,14 +152,16 @@ test('导出 apply 与 inject，inject 只声明 slots', async () => {
   assert.deepEqual(exports.inject, ['slots'])
 })
 
-test('apply() 在 conversation.input.activity 槽位注册了挂件', async () => {
+test('apply() 在 conversation.input.left 槽位注册了挂件（list 槽位，可与官方语音并存）', async () => {
   const { slotInjections, calls } = await runClientBundle()
   assert.equal(slotInjections.length, 1)
-  assert.equal(slotInjections[0].key, 'conversation.input.activity')
+  assert.equal(slotInjections[0].key, 'conversation.input.left')
 
   const registration = calls.find((call) => call.kind === 'register')
   assert.ok(registration, '应当注册一个槽位条目')
-  assert.equal(registration.options.name, 'conversation.input.activity')
+  assert.equal(registration.options.name, 'conversation.input.left')
+  // list 槽位必须自带 id：重复用别人的 id 会顶掉对方
+  assert.equal(registration.options.id, 'dsh-ai-passport')
   assert.equal(typeof registration.component, 'function', '组件必须是可渲染的 React 组件')
   // order 决定它在工具行里的位置；显式断言避免以后被误改到奇怪的位置
   assert.equal(typeof registration.options.order, 'number')
@@ -274,8 +276,9 @@ test('挂件不再包含任务区与旧的语音列表（源码级回归钉子�
   for (const gone of ['刷新任务', '刷新状态', '暂无任务', 'TASK_TAG', 'ap-row-task', 'ap-voice']) {
     assert.ok(!source.includes(gone), `挂件里不应再出现 ${gone}`)
   }
-  // 位置：弹窗改为右对齐 + 可调左移量（用户要求"向左移动一些"）
-  assert.ok(source.includes('right:var(--ap-pop-x'), '弹窗必须右对齐并使用可调偏移量')
+  // 位置：挂件在工具栏最左侧（conversation.input.left），弹窗必须**左对齐**向右展开，
+  // 否则 180px 的浮层会从屏幕左边缘出血。原先右对齐只是它还在 input.activity 时的做法。
+  assert.ok(source.includes('left:0;right:auto'), '弹窗必须左对齐（input.left 在工具栏最左侧）')
 })
 
 test('package.json 的 dsh.client 与 exports["./client"] 都已声明', async () => {
