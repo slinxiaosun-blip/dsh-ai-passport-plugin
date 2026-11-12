@@ -118,6 +118,36 @@ http://127.0.0.1:19387/dsh-passport
 完整配置表与语音识别（SenseVoice 本地模型）启用方式见
 [docs/03-构建与烧录.md](docs/03-构建与烧录.md) 与 [docs/04-桌面客户端集成.md](docs/04-桌面客户端集成.md)。
 
+### 环境排障：只读 doctor
+
+安装后先运行：
+
+```bash
+npm run doctor
+npm run doctor -- --profile web
+npm run doctor -- --all-profiles
+npm run --silent doctor -- --json
+```
+
+它会检查 profile、依赖声明、bundle 注册、模块解析、凭据元数据和 SenseVoice
+模型文件。凭据只检查存在性、可读性、大小与权限位，不读取文件内容。
+
+```text
+PASS  desktop  profile            /Users/me/.dsh/profiles/desktop
+PASS  desktop  dependencies       all required dependencies are declared
+PASS  desktop  bundles            all required bundles are registered
+PASS  desktop  module resolution  web-app, noble, and plugin resolve from this profile
+PASS  dsh-home credentials        540 bytes, mode 600; contents not read
+WARN  dsh-home SenseVoice files   model, tokens, or VAD is missing or incomplete
+
+Summary: 5 PASS, 1 WARN, 0 FAIL, 0 SKIP
+```
+
+状态为 `PASS` / `WARN` / `FAIL` / `SKIP`。有任意 `FAIL` 时退出码为 `1`，
+参数错误为 `2`，其余情况为 `0`。
+
+`doctor` 严格只读：不写文件、不安装依赖、不改蓝牙配对、不刷固件。
+
 ## 版本与兼容性
 
 当前实测环境（2026-11-08）：
